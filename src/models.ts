@@ -143,6 +143,7 @@ export interface ExecutionSummary {
   id: string;
   status: ExecutionStatus;
   agentId: string;
+  labels: Record<string, string>;
   createdAt: string;
   updatedAt: string;
 }

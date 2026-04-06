@@ -110,7 +110,13 @@ export class RebunoClient {
         const searchParams = new URLSearchParams();
         for (const [key, value] of Object.entries(options.params)) {
           if (value !== undefined && value !== null && value !== "") {
-            searchParams.set(key, String(value));
+            if (Array.isArray(value)) {
+              for (const item of value) {
+                searchParams.append(key, String(item));
+              }
+            } else {
+              searchParams.set(key, String(value));
+            }
           }
         }
         const qs = searchParams.toString();
@@ -206,6 +212,7 @@ export class RebunoClient {
   async listExecutions(options?: {
     status?: ExecutionStatus;
     agentId?: string;
+    labels?: Record<string, string>;
     limit?: number;
     cursor?: string;
   }): Promise<ListExecutionsResult> {
@@ -214,6 +221,11 @@ export class RebunoClient {
     };
     if (options?.status) params.status = options.status;
     if (options?.agentId) params.agent_id = options.agentId;
+    if (options?.labels) {
+      params.label = Object.entries(options.labels).map(
+        ([k, v]) => `${k}:${v}`,
+      );
+    }
     if (options?.cursor) params.cursor = options.cursor;
     return (await this.request("GET", "/v0/executions", {
       params,
