@@ -1,3 +1,6 @@
+[!WARNING]
+It's recommended to use the [Python SDK](https://github.com/rebuno/sdk-python) for now since this repo isn't being maintained
+
 # Rebuno TypeScript SDK
 
 TypeScript client library for the [Rebuno](https://github.com/rebuno/rebuno) agent execution runtime.
