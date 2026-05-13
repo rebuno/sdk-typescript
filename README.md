@@ -1,5 +1,5 @@
-[!WARNING]
-It's recommended to use the [Python SDK](https://github.com/rebuno/sdk-python) for now since this repo isn't being maintained
+> [!WARNING]
+> It's recommended to use the [Python SDK](https://github.com/rebuno/sdk-python) for now since this repo isn't being maintained
 
 # Rebuno TypeScript SDK
 
