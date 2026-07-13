@@ -1,6 +1,6 @@
 import { errorFromResponse, NetworkError } from "./errors.js";
 import type { FetchFn } from "./kernel.js";
-import { parseApproval, parseEvent, parseExecution, type Approval, type Event, type Execution } from "./types.js";
+import { parseApproval, parseEvent, parseExecution, parseStep, type Approval, type Event, type Execution, type Step } from "./types.js";
 
 const USER_AGENT = "rebuno-typescript-sdk";
 
@@ -85,6 +85,17 @@ export class Client {
 
   async cancel(executionId: string): Promise<void> {
     await this.request("POST", `/v0/executions/${executionId}/cancel`);
+  }
+
+  async listSteps(executionId: string, opts: { status?: string } = {}): Promise<Step[]> {
+    const query = opts.status ? { status: opts.status } : undefined;
+    const r = await this.request("GET", `/v0/executions/${executionId}/steps`, { query });
+    return ((await r.json()) as unknown[] ?? []).map((s) => parseStep(s as Record<string, unknown>));
+  }
+
+  async getStep(executionId: string, stepId: string): Promise<Step> {
+    const r = await this.request("GET", `/v0/executions/${executionId}/steps/${stepId}`);
+    return parseStep(await r.json());
   }
 
   async listApprovals(opts: { status?: string } = {}): Promise<Approval[]> {
