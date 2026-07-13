@@ -1,75 +1,48 @@
-import { describe, expect, it } from "vitest";
+import { describe, it, expect } from "vitest";
 import {
-  RebunoError,
-  NetworkError,
-  APIError,
-  ValidationError,
-  UnauthorizedError,
-  NotFoundError,
-  ConflictError,
-  PolicyError,
-  ToolError,
+  RebunoError, APIError, ValidationError, UnauthorizedError, NotFoundError,
+  PolicyError, ToolError, StepIDMismatch, RateLimited, Blocked, Terminated,
+  errorFromResponse,
 } from "../src/errors.js";
 
-describe("Error hierarchy", () => {
-  it("RebunoError is base error", () => {
-    const err = new RebunoError("test");
-    expect(err).toBeInstanceOf(Error);
-    expect(err).toBeInstanceOf(RebunoError);
-    expect(err.message).toBe("test");
-    expect(err.details).toEqual({});
+describe("errorFromResponse", () => {
+  it("maps policy_denied to PolicyError with ruleId", () => {
+    const e = errorFromResponse("policy_denied", "nope", 403, "rule-7");
+    expect(e).toBeInstanceOf(PolicyError);
+    expect((e as PolicyError).ruleId).toBe("rule-7");
+    expect((e as PolicyError).code).toBe("policy_denied");
   });
-
-  it("NetworkError extends RebunoError", () => {
-    const err = new NetworkError("connection refused");
-    expect(err).toBeInstanceOf(RebunoError);
-    expect(err.name).toBe("NetworkError");
+  it("maps not_found to NotFoundError", () => {
+    expect(errorFromResponse("not_found", "x", 404)).toBeInstanceOf(NotFoundError);
   });
-
-  it("APIError includes code and statusCode", () => {
-    const err = new APIError("bad request", "INVALID", 400);
-    expect(err).toBeInstanceOf(RebunoError);
-    expect(err.code).toBe("INVALID");
-    expect(err.statusCode).toBe(400);
-    expect(err.toString()).toContain("[INVALID]");
-    expect(err.toString()).toContain("HTTP 400");
+  it("maps validation_error to ValidationError", () => {
+    expect(errorFromResponse("validation_error", "x", 400)).toBeInstanceOf(ValidationError);
   });
-
-  it("ValidationError extends APIError", () => {
-    const err = new ValidationError("invalid input", "VALIDATION", 400);
-    expect(err).toBeInstanceOf(APIError);
-    expect(err.statusCode).toBe(400);
+  it("maps unauthorized to UnauthorizedError", () => {
+    expect(errorFromResponse("unauthorized", "x", 401)).toBeInstanceOf(UnauthorizedError);
   });
-
-  it("UnauthorizedError extends APIError", () => {
-    const err = new UnauthorizedError("bad token", "UNAUTHORIZED", 401);
-    expect(err).toBeInstanceOf(APIError);
-    expect(err.statusCode).toBe(401);
+  it("maps step_id_divergence to StepIDMismatch", () => {
+    expect(errorFromResponse("step_id_divergence", "x", 409)).toBeInstanceOf(StepIDMismatch);
   });
-
-  it("NotFoundError extends APIError", () => {
-    const err = new NotFoundError("not found", "NOT_FOUND", 404);
-    expect(err).toBeInstanceOf(APIError);
+  it("falls back to APIError for unknown codes", () => {
+    const e = errorFromResponse("weird", "x", 500);
+    expect(e).toBeInstanceOf(APIError);
+    expect((e as APIError).code).toBe("weird");
   });
+});
 
-  it("ConflictError extends APIError", () => {
-    const err = new ConflictError("conflict", "CONFLICT", 409);
-    expect(err).toBeInstanceOf(APIError);
+describe("error classes", () => {
+  it("ToolError carries toolId/stepId", () => {
+    const e = new ToolError("boom", { toolId: "t", stepId: "s" });
+    expect(e.toolId).toBe("t");
+    expect(e.stepId).toBe("s");
+    expect(e).toBeInstanceOf(RebunoError);
   });
-
-  it("PolicyError defaults to 403", () => {
-    const err = new PolicyError("denied", "rule-1");
-    expect(err).toBeInstanceOf(APIError);
-    expect(err.statusCode).toBe(403);
-    expect(err.code).toBe("policy_denied");
-    expect(err.ruleId).toBe("rule-1");
+  it("Blocked carries approvalId", () => {
+    expect(new Blocked("ap1").approvalId).toBe("ap1");
   });
-
-  it("ToolError includes tool metadata", () => {
-    const err = new ToolError("failed", "web.search", "step-1", true);
-    expect(err).toBeInstanceOf(RebunoError);
-    expect(err.toolId).toBe("web.search");
-    expect(err.stepId).toBe("step-1");
-    expect(err.retryable).toBe(true);
+  it("RateLimited and Terminated are RebunoErrors", () => {
+    expect(new RateLimited()).toBeInstanceOf(RebunoError);
+    expect(new Terminated("done")).toBeInstanceOf(RebunoError);
   });
 });

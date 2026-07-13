@@ -1,55 +1,29 @@
-export { VERSION, USER_AGENT } from "./version.js";
+export { Client } from "./client.js";
+export type { ClientOptions } from "./client.js";
 
-export {
-  RebunoError,
-  NetworkError,
-  APIError,
-  ValidationError,
-  UnauthorizedError,
-  NotFoundError,
-  ConflictError,
-  PolicyError,
-  ToolError,
-} from "./errors.js";
+export { Agent } from "./agent.js";
+export type { AgentOptions, ServeOptions, ProcessFn } from "./agent.js";
 
-export {
-  ExecutionStatus,
-  StepStatus,
-} from "./models.js";
+export { defineTool, wrapTool } from "./tool.js";
+export type { RebunoTool, DefineToolOptions, WrapToolOptions, Idempotency } from "./tool.js";
+
+export { step } from "./step.js";
+
+export { rebunoFetch, createRebunoFetch } from "./fetch.js";
+export type { RebunoFetchOptions } from "./fetch.js";
+
+export { wrapMcpTool, wrapMcpTools } from "./mcp.js";
+export type { WrapMcpOptions } from "./mcp.js";
+
+export { execution } from "./context.js";
+export { ExecutionContext } from "./execution.js";
+
 export type {
-  Execution,
-  Event,
-  Step,
-  Intent,
-  IntentResult,
-  Job,
-  JobResult,
-  Signal,
-  ToolSummary,
-  HistoryEntry,
-  ClaimResult,
-  ExecutionSummary,
-  ListExecutionsResult,
-  EventList,
-  SignalResult,
-} from "./models.js";
+  Execution, Step, StepDecision, Event, Approval, ExecutionStatus,
+} from "./types.js";
 
-export { RebunoClient } from "./client.js";
-export type { RebunoClientOptions, FetchFn } from "./client.js";
-
-export { AgentContext, BaseAgent } from "./agent.js";
-export type { BaseAgentOptions } from "./agent.js";
-
-export { BaseRunner } from "./runner.js";
-export type { BaseRunnerOptions } from "./runner.js";
-
-export { defineTool } from "./tools/index.js";
-export type { RebunoTool, WrappedTool } from "./tools/index.js";
-export { ToolRegistry } from "./tools/registry.js";
-export type { ToolFormat } from "./tools/registry.js";
-
-export { parseSSEStream } from "./sse.js";
-export type { SSEEvent } from "./sse.js";
-
-export { McpConnection, McpManager } from "./mcp.js";
-export type { McpServerConfig, McpToolInfo } from "./mcp.js";
+export {
+  RebunoError, NetworkError, APIError, ValidationError, UnauthorizedError,
+  NotFoundError, ConflictError, PolicyError, ToolError, StepIDMismatch,
+  RateLimited, Blocked, Terminated,
+} from "./errors.js";
