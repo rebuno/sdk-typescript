@@ -17,7 +17,7 @@ export type ProcessFn<TInput = any, TOutput = unknown> = (input: TInput) => TOut
 
 export interface AgentOptions {
   secret?: string;
-  kernelUrl?: string;
+  baseUrl?: string;
   webhookPath?: string;
   kernelTimeout?: number;
   inputSchema?: StandardSchema;
@@ -32,7 +32,7 @@ export interface ServeOptions {
 export class Agent<TInput = any, TOutput = unknown> {
   readonly agentId: string;
   private secret: string;
-  private kernelUrl: string;
+  private baseUrl: string;
   readonly webhookPath: string;
   private inputSchema?: StandardSchema;
   private kernel: KernelClient;
@@ -44,14 +44,14 @@ export class Agent<TInput = any, TOutput = unknown> {
     this.agentId = agentId;
     this.secret = opts.secret ?? process.env.REBUNO_AGENT_SECRET ?? "";
     if (!this.secret) throw new Error("secret required (set REBUNO_AGENT_SECRET or pass secret)");
-    this.kernelUrl = (opts.kernelUrl ?? process.env.REBUNO_URL ?? "").replace(/\/+$/, "");
-    if (!this.kernelUrl) throw new Error("kernelUrl required (set REBUNO_URL or pass kernelUrl)");
+    this.baseUrl = (opts.baseUrl ?? process.env.REBUNO_URL ?? "").replace(/\/+$/, "");
+    if (!this.baseUrl) throw new Error("baseUrl required (set REBUNO_URL or pass baseUrl)");
     this.webhookPath = opts.webhookPath ?? "/webhook";
     this.inputSchema = opts.inputSchema;
     this.kernel = new KernelClient({
       agentId,
       secret: this.secret,
-      baseUrl: this.kernelUrl,
+      baseUrl: this.baseUrl,
       timeout: opts.kernelTimeout ?? 35000,
       fetch: opts.fetch,
     });

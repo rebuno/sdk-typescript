@@ -39,7 +39,7 @@ async function webhookRequest(secret: string, executionId: string) {
 describe("Agent.fetch", () => {
   it("rejects a bad signature with 401", async () => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
-    const agent = new Agent("a1", { secret: SECRET, kernelUrl: KERNEL, fetch: f });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
     agent.bind(async () => ({ ok: true }));
     const raw = new TextEncoder().encode(JSON.stringify({ execution_id: "e1" }));
     const req = new Request(`${KERNEL}/webhook`, { method: "POST", headers: { "Rebuno-Signature": "sha256=bad" }, body: raw });
@@ -49,7 +49,7 @@ describe("Agent.fetch", () => {
 
   it("400 when execution_id is missing", async () => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
-    const agent = new Agent("a1", { secret: SECRET, kernelUrl: KERNEL, fetch: f });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
     agent.bind(async () => ({}));
     const raw = new TextEncoder().encode(JSON.stringify({}));
     const sig = await signBody(SECRET, raw);
@@ -59,7 +59,7 @@ describe("Agent.fetch", () => {
 
   it("dispatches: runs process and completes the execution", async () => {
     const { f, calls } = kernelFetch({ id: "e1", status: "running", input: { prompt: "hi" } });
-    const agent = new Agent("a1", { secret: SECRET, kernelUrl: KERNEL, fetch: f });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
     const process = vi.fn(async (input: any) => ({ echo: input.prompt }));
     agent.bind(process);
     const resp = await agent.fetch(await webhookRequest(SECRET, "e1"));
@@ -72,7 +72,7 @@ describe("Agent.fetch", () => {
 
   it("skips terminal executions without running process", async () => {
     const { f } = kernelFetch({ id: "e1", status: "completed", input: {} });
-    const agent = new Agent("a1", { secret: SECRET, kernelUrl: KERNEL, fetch: f });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
     const process = vi.fn(async () => ({}));
     agent.bind(process);
     await agent.fetch(await webhookRequest(SECRET, "e1"));
@@ -88,7 +88,7 @@ describe("Agent.fetch", () => {
         validate: (v: any) => (v && v.prompt ? { value: v } : { issues: [{ message: "prompt required" }] }),
       },
     };
-    const agent = new Agent("a1", { secret: SECRET, kernelUrl: KERNEL, fetch: f, inputSchema: schema });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f, inputSchema: schema });
     agent.bind(async () => ({}));
     await agent.fetch(await webhookRequest(SECRET, "e1"));
     await agent.join();

@@ -35,7 +35,7 @@ async function process(input: { prompt: string }) {
   return { answer: hits };
 }
 
-const agent = new Agent("dev-agent", { secret: "dev-secret", kernelUrl: "http://localhost:8080" });
+const agent = new Agent("dev-agent", { secret: "dev-secret", baseUrl: "http://localhost:8080" });
 await agent.serve({ port: 5000 }, process);
 ```
 
