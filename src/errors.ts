@@ -21,6 +21,7 @@ export class APIError extends RebunoError {
 
 export class ValidationError extends APIError {}
 export class UnauthorizedError extends APIError {}
+export class ForbiddenError extends APIError {}
 export class NotFoundError extends APIError {}
 export class ConflictError extends APIError {}
 
@@ -71,6 +72,7 @@ const ERROR_BY_CODE: Record<string, new (m: string, c: string, s: number) => API
   not_found: NotFoundError,
   validation_error: ValidationError,
   unauthorized: UnauthorizedError,
+  forbidden: ForbiddenError,
   conflict: APIError,
   step_id_divergence: StepIDMismatch,
 };

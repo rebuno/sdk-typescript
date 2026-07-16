@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  RebunoError, APIError, ValidationError, UnauthorizedError, NotFoundError,
+  RebunoError, APIError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError,
   PolicyError, ToolError, StepIDMismatch, RateLimited, Blocked, Terminated,
   errorFromResponse,
 } from "../src/errors.js";
@@ -20,6 +20,12 @@ describe("errorFromResponse", () => {
   });
   it("maps unauthorized to UnauthorizedError", () => {
     expect(errorFromResponse("unauthorized", "x", 401)).toBeInstanceOf(UnauthorizedError);
+  });
+  it("maps forbidden to ForbiddenError", () => {
+    const e = errorFromResponse("forbidden", "not an approver", 403);
+    expect(e).toBeInstanceOf(ForbiddenError);
+    expect((e as ForbiddenError).code).toBe("forbidden");
+    expect((e as ForbiddenError).statusCode).toBe(403);
   });
   it("maps step_id_divergence to StepIDMismatch", () => {
     expect(errorFromResponse("step_id_divergence", "x", 409)).toBeInstanceOf(StepIDMismatch);

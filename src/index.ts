@@ -24,6 +24,6 @@ export type {
 
 export {
   RebunoError, NetworkError, APIError, ValidationError, UnauthorizedError,
-  NotFoundError, ConflictError, PolicyError, ToolError, StepIDMismatch,
+  ForbiddenError, NotFoundError, ConflictError, PolicyError, ToolError, StepIDMismatch,
   RateLimited, Blocked, Terminated,
 } from "./errors.js";
