@@ -23,6 +23,7 @@ export class ExecutionContext {
   status: string;
   private kernel: KernelClient;
   private occurrences = new Map<string, number>();
+  private submitChains = new Map<string, Promise<unknown>>();
   private replay: Map<string, Step> | null = null;
 
   constructor(o: ExecutionContextOptions) {
@@ -58,6 +59,25 @@ export class ExecutionContext {
     return n;
   }
 
+  /**
+   * Assign the occurrence and run the submit handshake serialized per effect
+   * identity, so concurrent *identical* (kind, target, args) effects submit in a
+   * defined order.
+   */
+  private submit(p: { kind: string; target: string; args: unknown; idempotency: string }): Promise<{ stepId: string; dec: StepDecision }> {
+    const ah = argsHash(p.args);
+    const key = `${p.kind} ${p.target} ${ah}`;
+    const prev = this.submitChains.get(key) ?? Promise.resolve();
+    const run = prev.then(async () => {
+      const occ = this.nextOccurrence(p.kind, p.target, ah);
+      const stepId = computeStepId(this.id, p.kind, p.target, ah, occ);
+      const dec = await this.decide({ ...p, stepId });
+      return { stepId, dec };
+    });
+    this.submitChains.set(key, run.catch(() => {}));
+    return run;
+  }
+
   private raiseForDecision(dec: StepDecision): void {
     switch (dec.decision) {
       case "denied": throw new PolicyError(dec.reason || "denied by policy");
@@ -86,11 +106,7 @@ export class ExecutionContext {
   ): Promise<unknown> {
     const idempotency = opts.idempotency ?? "safe_to_retry";
     const kind = "tool_call";
-    const ah = argsHash(args);
-    const occ = this.nextOccurrence(kind, target, ah);
-    const stepId = computeStepId(this.id, kind, target, ah, occ);
-
-    const dec = await this.decide({ kind, target, args, idempotency, stepId });
+    const { stepId, dec } = await this.submit({ kind, target, args, idempotency });
 
     if (dec.decision === "replay") {
       if (dec.error != null) throw new ToolError(errorMessage(dec.error), { toolId: target, stepId });
@@ -117,11 +133,7 @@ export class ExecutionContext {
 
   async invokeLlm(target: string, request: unknown, opts: { run: () => Promise<unknown> }): Promise<unknown> {
     const kind = "llm_call";
-    const ah = argsHash(request);
-    const occ = this.nextOccurrence(kind, target, ah);
-    const stepId = computeStepId(this.id, kind, target, ah, occ);
-
-    const dec = await this.decide({ kind, target, args: request, idempotency: "safe_to_retry", stepId });
+    const { stepId, dec } = await this.submit({ kind, target, args: request, idempotency: "safe_to_retry" });
 
     if (dec.decision === "replay") {
       if (dec.error != null) throw new RebunoError(errorMessage(dec.error));
