@@ -98,6 +98,10 @@ export class KernelClient {
     await this.send("POST", `/v0/executions/${executionId}/steps/${stepId}/fail`, enc(JSON.stringify({ error })));
   }
 
+  async streamDelta(executionId: string, stepId: string, seq: number, data: string): Promise<void> {
+    await this.send("POST", `/v0/executions/${executionId}/steps/${stepId}/stream`, enc(JSON.stringify({ seq, data })));
+  }
+
   async heartbeat(executionId: string): Promise<void> {
     await this.send("POST", `/v0/executions/${executionId}/heartbeat`, EMPTY);
   }

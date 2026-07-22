@@ -46,6 +46,18 @@ describe("KernelClient", () => {
     expect(d.decision).toBe("proceed");
   });
 
+  it("streamDelta posts seq and data to the stream endpoint", async () => {
+    const f = fakeFetch((url, init) => {
+      expect(url).toBe("http://kernel/v0/executions/e1/steps/sid123/stream");
+      expect(new TextDecoder().decode(init.body as Uint8Array)).toBe('{"seq":4,"data":"tok"}');
+      expect((init.headers as Record<string, string>)["Rebuno-Signature"]).toMatch(/^sha256=/);
+      return new Response("", { status: 200 });
+    });
+    const k = new KernelClient(opts(f));
+    await k.streamDelta("e1", "sid123", 4, "tok");
+    expect(f).toHaveBeenCalledOnce();
+  });
+
   it("getStep returns null on 404", async () => {
     const f = fakeFetch(() => new Response(JSON.stringify({ code: "not_found", message: "x" }), { status: 404 }));
     const k = new KernelClient(opts(f));

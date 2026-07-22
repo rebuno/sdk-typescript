@@ -52,14 +52,121 @@ describe("rebunoFetch", () => {
     expect(await resp.json()).toEqual({ replayed: true });
   });
 
-  it("passes streaming requests through with no recording", async () => {
-    const inner = vi.fn(async () => new Response("stream", { status: 200 }));
-    const k = fakeKernel();
+});
+
+// A streamed provider response: a >2KB payload so the delta batcher emits
+// multiple deltas, exercising size-based flushing and monotonic seq numbering.
+const SSE = 'data: {"delta":"' + "x".repeat(5000) + '"}\n\ndata: [DONE]\n\n';
+const SSE_BYTES = new TextEncoder().encode(SSE);
+
+/** Minimal kernel: proceed for new step ids, replay for completed ones. */
+function stepKernel() {
+  const steps = new Map<string, unknown>();
+  const deltas: [string, number, string][] = [];
+  const completed: string[] = [];
+  return {
+    listTerminalSteps: vi.fn(async () => []),
+    submitStep: vi.fn(async (_e: string, p: any) =>
+      steps.has(p.stepId)
+        ? { decision: "replay", result: steps.get(p.stepId), error: null, approvalId: null, reason: "" }
+        : { decision: "proceed", result: null, error: null, approvalId: null, reason: "" }),
+    completeStep: vi.fn(async (_e: string, stepId: string, result: unknown) => { steps.set(stepId, result); completed.push(stepId); }),
+    failStep: vi.fn(async () => {}),
+    heartbeat: vi.fn(async () => {}),
+    streamDelta: vi.fn(async (_e: string, stepId: string, seq: number, data: string) => { deltas.push([stepId, seq, data]); }),
+    deltas, completed,
+  };
+}
+
+function sseResponse(chunks: (Uint8Array | Error)[]): Response {
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = chunks.shift();
+      if (next === undefined) return controller.close();
+      if (next instanceof Error) throw next;
+      controller.enqueue(next);
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+}
+
+function chunked(bytes: Uint8Array, size: number): Uint8Array[] {
+  const out: Uint8Array[] = [];
+  for (let i = 0; i < bytes.length; i += size) out.push(bytes.slice(i, i + size));
+  return out;
+}
+
+async function drainStream(resp: Response): Promise<string> {
+  let got = "";
+  const dec = new TextDecoder();
+  for await (const chunk of resp.body as any) got += dec.decode(chunk, { stream: true });
+  return got + dec.decode();
+}
+
+describe("rebunoFetch streaming", () => {
+  const req = JSON.stringify({ model: "claude", stream: true });
+
+  it("tees the stream, records the whole, then replays as a stream", async () => {
+    const k = stepKernel();
+    let calls = 0;
+    const inner = vi.fn(async () => { calls++; return sseResponse(chunked(SSE_BYTES, 512)); });
     const rf = createRebunoFetch({ fetch: inner as any });
-    await runWithContext(ctx(k), () =>
-      rf("http://llm/v1/chat", { method: "POST", body: JSON.stringify({ model: "gpt-4", stream: true }) }),
-    );
-    expect(k.submitStep).not.toHaveBeenCalled();
-    expect(inner).toHaveBeenCalledOnce();
+
+    // First run: tee bytes to the caller live, publish deltas, record the whole.
+    const got = await runWithContext(ctx(k), async () => drainStream(await rf("http://llm/v1/chat", { method: "POST", body: req })));
+    expect(got).toBe(SSE); // caller received the full stream
+    expect(calls).toBe(1);
+    expect(k.submitStep.mock.calls[0][1].kind).toBe("llm_call");
+    expect(k.completed.length).toBe(1); // the assembled whole was recorded
+    // Live deltas reassemble to the full body with monotonic seqs from 0.
+    expect(k.deltas.length).toBeGreaterThanOrEqual(2); // size-based flush produced several
+    expect(k.deltas.map((d) => d[2]).join("")).toBe(SSE);
+    expect(k.deltas.map((d) => d[1])).toEqual(k.deltas.map((_, i) => i));
+
+    // Resume: replay the recorded whole as a stream — no provider call, no deltas.
+    const nDeltas = k.deltas.length;
+    const replayed = await runWithContext(ctx(k), async () => drainStream(await rf("http://llm/v1/chat", { method: "POST", body: req })));
+    expect(replayed).toBe(SSE);
+    expect(calls).toBe(1); // provider was NOT called again
+    expect(k.deltas.length).toBe(nDeltas); // replay publishes nothing
+  });
+
+  it("records when the consumer stops at [DONE] without draining to EOF", async () => {
+    const k = stepKernel();
+    const inner = vi.fn(async () => sseResponse(chunked(SSE_BYTES, 512)));
+    const rf = createRebunoFetch({ fetch: inner as any });
+    await runWithContext(ctx(k), async () => {
+      const resp = await rf("http://llm/v1/chat", { method: "POST", body: req });
+      let got = "";
+      const dec = new TextDecoder();
+      for await (const chunk of resp.body as any) {
+        got += dec.decode(chunk, { stream: true });
+        if (got.includes("[DONE]")) break; // stop early — do not pull to EOF
+      }
+    });
+    expect(k.completed.length).toBe(1); // recorded on cancel, not left executing
+    expect(k.deltas.map((d) => d[2]).join("")).toBe(SSE); // all bytes still teed
+  });
+
+  it("fails the step on a mid-stream error instead of recording a partial", async () => {
+    const k = stepKernel();
+    const inner = vi.fn(async () => sseResponse([SSE_BYTES.slice(0, 512), new Error("connection dropped mid-stream")]));
+    const rf = createRebunoFetch({ fetch: inner as any });
+    await runWithContext(ctx(k), async () => {
+      const resp = await rf("http://llm/v1/chat", { method: "POST", body: req });
+      await expect(drainStream(resp)).rejects.toThrow(/connection dropped/);
+    });
+    expect(k.completed).toEqual([]); // failed the step instead of recording a partial
+    expect(k.failStep).toHaveBeenCalledOnce();
+  });
+
+  it("records an error status like a non-stream response", async () => {
+    const k = stepKernel();
+    const inner = vi.fn(async () => new Response(JSON.stringify({ error: "rate limited" }), { status: 429, headers: { "content-type": "application/json" } }));
+    const rf = createRebunoFetch({ fetch: inner as any });
+    const resp = await runWithContext(ctx(k), () => rf("http://llm/v1/chat", { method: "POST", body: req }));
+    expect(resp.status).toBe(429);
+    expect(k.completed.length).toBe(1); // the error response was recorded as the result
+    expect(k.deltas).toEqual([]); // nothing to tee on an error
   });
 });

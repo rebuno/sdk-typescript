@@ -90,12 +90,19 @@ export class ExecutionContext {
     }
   }
 
-  private async runWithHeartbeat<T>(run: () => Promise<T>, intervalMs = 30000): Promise<T> {
+  /** Start renewing the dispatch lease in the background; returns a stop function
+   * the caller must invoke when the effect finishes. */
+  startHeartbeat(intervalMs = 30000): () => void {
     const hb = setInterval(() => { void this.kernel.heartbeat(this.id).catch(() => {}); }, intervalMs);
+    return () => clearInterval(hb);
+  }
+
+  private async runWithHeartbeat<T>(run: () => Promise<T>, intervalMs = 30000): Promise<T> {
+    const stop = this.startHeartbeat(intervalMs);
     try {
       return await run();
     } finally {
-      clearInterval(hb);
+      stop();
     }
   }
 
@@ -131,29 +138,33 @@ export class ExecutionContext {
     return result;
   }
 
-  async invokeLlm(target: string, request: unknown, opts: { run: () => Promise<unknown> }): Promise<unknown> {
-    const kind = "llm_call";
-    const { stepId, dec } = await this.submit({ kind, target, args: request, idempotency: "safe_to_retry" });
-
+  /** Submit an `llm_call` step. Returns `(stepId, decision)`: `proceed` (run the
+   * provider call, then record it via {@link recordLlm}) or `replay` (rebuild the
+   * response from `decision.result`). Other decisions raise the matching error. */
+  async beginLlm(target: string, request: unknown): Promise<{ stepId: string; dec: StepDecision }> {
+    const { stepId, dec } = await this.submit({ kind: "llm_call", target, args: request, idempotency: "safe_to_retry" });
     if (dec.decision === "replay") {
       if (dec.error != null) throw new RebunoError(errorMessage(dec.error));
-      return dec.result;
+      return { stepId, dec };
     }
     this.raiseForDecision(dec);
-
-    let result: unknown;
-    try {
-      result = await this.runWithHeartbeat(opts.run);
-    } catch (e) {
-      if (e instanceof Blocked || e instanceof Terminated || e instanceof PolicyError || e instanceof RateLimited) throw e;
-      await this.failStepQuietly(stepId, e);
-      throw e;
-    }
-    await this.kernel.completeStep(this.id, stepId, result);
-    return result;
+    return { stepId, dec };
   }
 
-  private async failStepQuietly(stepId: string, error: unknown): Promise<void> {
+  /** Publish a live delta for an in-flight streamed step. Best-effort: deltas are
+   * advisory, so failures are swallowed — the recorded whole is the durable result. */
+  async publishLlmDelta(stepId: string, seq: number, data: string): Promise<void> {
+    try {
+      await this.kernel.streamDelta(this.id, stepId, seq, data);
+    } catch { /* best effort */ }
+  }
+
+  /** Record the assembled (streamed or whole) response as the step's durable result. */
+  async recordLlm(stepId: string, result: unknown): Promise<void> {
+    await this.kernel.completeStep(this.id, stepId, result);
+  }
+
+  async failStepQuietly(stepId: string, error: unknown): Promise<void> {
     try {
       await this.kernel.failStep(this.id, stepId, { message: String(error instanceof Error ? error.message : error) });
     } catch { /* best effort */ }
