@@ -45,9 +45,6 @@ export class ToolError extends RebunoError {
   }
 }
 
-/** Kernel rejected the SDK-computed step id (409 step_id_divergence). */
-export class StepIDMismatch extends APIError {}
-
 export class RateLimited extends RebunoError {
   reason: string;
   constructor(reason = "rate_limit_exceeded") {
@@ -74,7 +71,6 @@ const ERROR_BY_CODE: Record<string, new (m: string, c: string, s: number) => API
   unauthorized: UnauthorizedError,
   forbidden: ForbiddenError,
   conflict: APIError,
-  step_id_divergence: StepIDMismatch,
 };
 
 export function errorFromResponse(code: string, message: string, statusCode: number, ruleId = ""): RebunoError {

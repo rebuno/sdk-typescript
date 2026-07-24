@@ -3,10 +3,14 @@ import { ExecutionContext } from "../src/execution.js";
 import { runWithContext, getExecution, execution } from "../src/context.js";
 import { PolicyError, RateLimited, Blocked, Terminated, ToolError } from "../src/errors.js";
 
+/** Stands in for the kernel: assigns each submitted step an id, the way the real
+ * one does, so decisions carry the id the SDK must use to complete them. */
 function fakeKernel(overrides: Partial<Record<string, any>> = {}) {
+  let n = 0;
+  const decide = overrides.decide ?? (() => ({ decision: "proceed", result: null, error: null, approvalId: null, reason: "" }));
+  delete overrides.decide;
   return {
-    listTerminalSteps: vi.fn(async () => []),
-    submitStep: vi.fn(async () => ({ decision: "proceed", result: null, error: null, approvalId: null, reason: "" })),
+    submitStep: vi.fn(async () => ({ stepId: `step-${++n}`, ...decide() })),
     completeStep: vi.fn(async () => {}),
     failStep: vi.fn(async () => {}),
     heartbeat: vi.fn(async () => {}),
@@ -15,7 +19,7 @@ function fakeKernel(overrides: Partial<Record<string, any>> = {}) {
 }
 
 function ctxWith(kernel: any) {
-  return new ExecutionContext({ kernel, executionId: "e1", agentId: "a", input: { p: 1 }, status: "running" });
+  return new ExecutionContext({ kernel, executionId: "e1", dispatchId: "d1", agentId: "a", input: { p: 1 }, status: "running" });
 }
 
 describe("ambient context", () => {
@@ -43,8 +47,7 @@ describe("invokeTool", () => {
 
   it("replays a recorded terminal step without running the body", async () => {
     const kernel = fakeKernel({
-      listTerminalSteps: vi.fn(async () => []),
-      submitStep: vi.fn(async () => ({ decision: "replay", result: "cached", error: null, approvalId: null, reason: "" })),
+      decide: () => ({ decision: "replay", result: "cached", error: null, approvalId: null, reason: "" }),
     });
     const ctx = ctxWith(kernel);
     const body = vi.fn(async () => "fresh");
@@ -53,23 +56,23 @@ describe("invokeTool", () => {
     expect(body).not.toHaveBeenCalled();
   });
 
-  it("hydrated terminal step replays from the local map (no submitStep)", async () => {
-    const kernel = fakeKernel({
-      listTerminalSteps: vi.fn(async () => [
-        { stepId: "will-match", status: "succeeded", result: "hydrated", error: null },
-      ]),
-    });
+  it("forwards the dispatch id on every submit", async () => {
+    const kernel = fakeKernel();
     const ctx = ctxWith(kernel);
-    await ctx.hydrate();
-    // Force the computed step id to match the hydrated one by stubbing computeStepId path:
-    // Instead, assert submitStep IS called when no hydrated match, proving the map is consulted.
     await ctx.invokeTool("search", { q: "x" }, { run: async () => "fresh" });
-    expect(kernel.submitStep).toHaveBeenCalled(); // no id match => kernel consulted
+    expect(kernel.submitStep.mock.calls[0][1].dispatchId).toBe("d1");
+  });
+
+  it("completes the step under the id the kernel assigned", async () => {
+    const kernel = fakeKernel();
+    const ctx = ctxWith(kernel);
+    await ctx.invokeTool("search", { q: "x" }, { run: async () => "fresh" });
+    expect(kernel.completeStep).toHaveBeenCalledWith("e1", "step-1", "fresh");
   });
 
   it("maps denied decision to PolicyError", async () => {
     const kernel = fakeKernel({
-      submitStep: vi.fn(async () => ({ decision: "denied", result: null, error: null, approvalId: null, reason: "no" })),
+      decide: () => ({ decision: "denied", result: null, error: null, approvalId: null, reason: "no" }),
     });
     const ctx = ctxWith(kernel);
     await expect(ctx.invokeTool("t", {}, { run: async () => 1 })).rejects.toBeInstanceOf(PolicyError);
@@ -77,7 +80,7 @@ describe("invokeTool", () => {
 
   it("maps blocked decision to Blocked", async () => {
     const kernel = fakeKernel({
-      submitStep: vi.fn(async () => ({ decision: "blocked", result: null, error: null, approvalId: "ap1", reason: "" })),
+      decide: () => ({ decision: "blocked", result: null, error: null, approvalId: "ap1", reason: "" }),
     });
     const ctx = ctxWith(kernel);
     await expect(ctx.invokeTool("t", {}, { run: async () => 1 })).rejects.toBeInstanceOf(Blocked);
@@ -91,13 +94,11 @@ describe("invokeTool", () => {
     expect(kernel.failStep).toHaveBeenCalledOnce();
   });
 
-  it("counts occurrences so repeated identical calls get distinct step ids", async () => {
+  it("identical calls take the kernel's distinct ids", async () => {
     const kernel = fakeKernel();
     const ctx = ctxWith(kernel);
     await ctx.invokeTool("t", { a: 1 }, { run: async () => 1 });
     await ctx.invokeTool("t", { a: 1 }, { run: async () => 2 });
-    const id0 = kernel.submitStep.mock.calls[0][1].stepId;
-    const id1 = kernel.submitStep.mock.calls[1][1].stepId;
-    expect(id0).not.toBe(id1);
+    expect(kernel.completeStep.mock.calls.map((c: any[]) => c[1])).toEqual(["step-1", "step-2"]);
   });
 });

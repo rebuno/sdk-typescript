@@ -7,7 +7,7 @@ describe("public surface", () => {
       "Client", "Agent", "defineTool", "wrapTool", "step",
       "rebunoFetch", "createRebunoFetch", "wrapMcpTool", "wrapMcpTools", "execution",
       "RebunoError", "APIError", "PolicyError", "ToolError", "NotFoundError",
-      "ValidationError", "UnauthorizedError", "StepIDMismatch", "RateLimited", "Blocked", "Terminated",
+      "ValidationError", "UnauthorizedError", "RateLimited", "Blocked", "Terminated",
     ]) {
       expect(rebuno[name as keyof typeof rebuno], `missing export: ${name}`).toBeDefined();
     }

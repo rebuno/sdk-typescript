@@ -1,5 +1,4 @@
 import { signBody } from "./crypto.js";
-import { canonicalJson } from "./identity.js";
 import { errorFromResponse, NetworkError, NotFoundError } from "./errors.js";
 import { parseExecution, parseStep, parseStepDecision, type Execution, type Step, type StepDecision } from "./types.js";
 
@@ -72,21 +71,12 @@ export class KernelClient {
     }
   }
 
-  async listTerminalSteps(executionId: string): Promise<Step[]> {
-    const r = await this.send("GET", `/v0/executions/${executionId}/steps?status=terminal`, EMPTY);
-    return ((await r.json()) as unknown[]).map((s) => parseStep(s as Record<string, unknown>));
-  }
-
   async submitStep(
     executionId: string,
-    p: { kind: string; target: string; args: unknown; idempotency: string; stepId: string },
+    p: { kind: string; target: string; args: unknown; idempotency: string; dispatchId: string },
   ): Promise<StepDecision> {
-    // Build the body so `args` is canonical (sent bytes == hashed bytes).
-    const body = enc(
-      `{"kind":${JSON.stringify(p.kind)},"target":${JSON.stringify(p.target)},"args":`,
-    );
-    const full = concat(body, canonicalJson(p.args), enc(`,"idempotency":${JSON.stringify(p.idempotency)}}`));
-    const r = await this.send("POST", `/v0/executions/${executionId}/steps`, full, { "Rebuno-Step-Id": p.stepId });
+    const body = enc(JSON.stringify({ kind: p.kind, target: p.target, args: p.args, idempotency: p.idempotency }));
+    const r = await this.send("POST", `/v0/executions/${executionId}/steps`, body, { "Rebuno-Dispatch-Id": p.dispatchId });
     return parseStepDecision(await r.json());
   }
 
@@ -113,14 +103,6 @@ export class KernelClient {
   async failExecution(executionId: string, error: string): Promise<void> {
     await this.send("POST", `/v0/executions/${executionId}/fail`, enc(JSON.stringify({ error })));
   }
-}
-
-function concat(...parts: Uint8Array[]): Uint8Array {
-  const len = parts.reduce((n, p) => n + p.length, 0);
-  const out = new Uint8Array(len);
-  let off = 0;
-  for (const p of parts) { out.set(p, off); off += p.length; }
-  return out;
 }
 
 async function errorFromResp(resp: Response): Promise<Error> {

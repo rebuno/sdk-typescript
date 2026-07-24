@@ -1,81 +1,50 @@
-import { argsHash, computeStepId } from "./identity.js";
 import {
   Blocked, PolicyError, RateLimited, RebunoError, Terminated, ToolError,
 } from "./errors.js";
 import type { KernelClient } from "./kernel.js";
-import type { Step, StepDecision } from "./types.js";
+import type { StepDecision } from "./types.js";
 
 type Idempotency = "safe_to_retry" | "at_most_once";
 
 export interface ExecutionContextOptions {
   kernel: KernelClient;
   executionId: string;
+  dispatchId: string;
   agentId: string;
   input: unknown;
   status?: string;
 }
 
-/** One per dispatch. Drives effect submission, replay, and occurrence counting. */
+/** One per dispatch. Submits effects to the kernel and applies its decisions. */
 export class ExecutionContext {
   readonly id: string;
+  readonly dispatchId: string;
   readonly agentId: string;
   readonly input: unknown;
   status: string;
   private kernel: KernelClient;
-  private occurrences = new Map<string, number>();
-  private submitChains = new Map<string, Promise<unknown>>();
-  private replay: Map<string, Step> | null = null;
 
   constructor(o: ExecutionContextOptions) {
     this.kernel = o.kernel;
     this.id = o.executionId;
+    this.dispatchId = o.dispatchId;
     this.agentId = o.agentId;
     this.input = o.input;
     this.status = o.status ?? "running";
   }
 
-  /** Preload terminal steps so replay is one bulk read, not a round trip per step. */
-  async hydrate(): Promise<void> {
-    try {
-      const steps = await this.kernel.listTerminalSteps(this.id);
-      this.replay = new Map(steps.map((s) => [s.stepId, s]));
-    } catch {
-      this.replay = null; // fall back to per-step replay
-    }
-  }
-
-  private async decide(p: { kind: string; target: string; args: unknown; idempotency: string; stepId: string }): Promise<StepDecision> {
-    if (this.replay) {
-      const hit = this.replay.get(p.stepId);
-      if (hit) return decisionFromStep(hit);
-    }
-    return this.kernel.submitStep(this.id, p);
-  }
-
-  private nextOccurrence(kind: string, target: string, ah: string): number {
-    const key = `${kind} ${target} ${ah}`;
-    const n = this.occurrences.get(key) ?? 0;
-    this.occurrences.set(key, n + 1);
-    return n;
-  }
-
   /**
-   * Assign the occurrence and run the submit handshake serialized per effect
-   * identity, so concurrent *identical* (kind, target, args) effects submit in a
-   * defined order.
+   * Ask the kernel to decide this effect, and return `(stepId, decision)`.
+   *
+   * The kernel assigns the step id: it counts occurrences of this effect within
+   * the dispatch under its own lock, so concurrent identical calls get distinct
+   * steps without any coordination here. `stepId` is empty for decisions that
+   * recorded no step (`rate_limited`, `execution_*`), which
+   * {@link raiseForDecision} turns into an exception before it is used.
    */
-  private submit(p: { kind: string; target: string; args: unknown; idempotency: string }): Promise<{ stepId: string; dec: StepDecision }> {
-    const ah = argsHash(p.args);
-    const key = `${p.kind} ${p.target} ${ah}`;
-    const prev = this.submitChains.get(key) ?? Promise.resolve();
-    const run = prev.then(async () => {
-      const occ = this.nextOccurrence(p.kind, p.target, ah);
-      const stepId = computeStepId(this.id, p.kind, p.target, ah, occ);
-      const dec = await this.decide({ ...p, stepId });
-      return { stepId, dec };
-    });
-    this.submitChains.set(key, run.catch(() => {}));
-    return run;
+  private async submit(p: { kind: string; target: string; args: unknown; idempotency: string }): Promise<{ stepId: string; dec: StepDecision }> {
+    const dec = await this.kernel.submitStep(this.id, { ...p, dispatchId: this.dispatchId });
+    return { stepId: dec.stepId, dec };
   }
 
   private raiseForDecision(dec: StepDecision): void {
@@ -169,13 +138,6 @@ export class ExecutionContext {
       await this.kernel.failStep(this.id, stepId, { message: String(error instanceof Error ? error.message : error) });
     } catch { /* best effort */ }
   }
-}
-
-function decisionFromStep(step: Step): StepDecision {
-  if (step.status === "succeeded") return { decision: "replay", result: step.result, error: null, approvalId: null, reason: "" };
-  if (step.status === "failed") return { decision: "replay", result: null, error: step.error, approvalId: null, reason: "" };
-  if (step.status === "denied") return { decision: "denied", result: null, error: null, approvalId: null, reason: "policy_denied" };
-  return { decision: "proceed", result: null, error: null, approvalId: null, reason: "" };
 }
 
 function errorMessage(error: unknown): string {

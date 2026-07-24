@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { Agent } from "../src/agent.js";
 import { signBody } from "../src/crypto.js";
+import { execution } from "../src/context.js";
 
 const SECRET = "sec";
 const KERNEL = "http://kernel";
@@ -26,8 +27,8 @@ function kernelFetch(exec: any, steps: any[] = []) {
   return { f, calls };
 }
 
-async function webhookRequest(secret: string, executionId: string) {
-  const raw = new TextEncoder().encode(JSON.stringify({ execution_id: executionId }));
+async function webhookRequest(secret: string, executionId: string, dispatchId = "d1") {
+  const raw = new TextEncoder().encode(JSON.stringify({ execution_id: executionId, dispatch_id: dispatchId }));
   const sig = await signBody(secret, raw);
   return new Request(`${KERNEL}/webhook`, {
     method: "POST",
@@ -41,7 +42,7 @@ describe("Agent.fetch", () => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
     const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
     agent.bind(async () => ({ ok: true }));
-    const raw = new TextEncoder().encode(JSON.stringify({ execution_id: "e1" }));
+    const raw = new TextEncoder().encode(JSON.stringify({ execution_id: "e1", dispatch_id: "d1" }));
     const req = new Request(`${KERNEL}/webhook`, { method: "POST", headers: { "Rebuno-Signature": "sha256=bad" }, body: raw });
     const resp = await agent.fetch(req);
     expect(resp.status).toBe(401);
@@ -51,7 +52,19 @@ describe("Agent.fetch", () => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
     const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
     agent.bind(async () => ({}));
-    const raw = new TextEncoder().encode(JSON.stringify({}));
+    const raw = new TextEncoder().encode(JSON.stringify({ dispatch_id: "d1" }));
+    const sig = await signBody(SECRET, raw);
+    const req = new Request(`${KERNEL}/webhook`, { method: "POST", headers: { "Rebuno-Signature": sig }, body: raw });
+    expect((await agent.fetch(req)).status).toBe(400);
+  });
+
+  it("400 when dispatch_id is missing", async () => {
+    // Every effect this run submits must carry the dispatch it was sent under, so
+    // a payload missing one is unusable rather than silently degraded.
+    const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
+    agent.bind(async () => ({}));
+    const raw = new TextEncoder().encode(JSON.stringify({ execution_id: "e1" }));
     const sig = await signBody(SECRET, raw);
     const req = new Request(`${KERNEL}/webhook`, { method: "POST", headers: { "Rebuno-Signature": sig }, body: raw });
     expect((await agent.fetch(req)).status).toBe(400);
@@ -68,6 +81,16 @@ describe("Agent.fetch", () => {
     expect(process).toHaveBeenCalledWith({ prompt: "hi" });
     const complete = calls.find((c) => c.url.endsWith("/v0/executions/e1/complete"));
     expect(complete?.body).toEqual({ output: { echo: "hi" } });
+  });
+
+  it("the dispatch id reaches the execution context", async () => {
+    const { f } = kernelFetch({ id: "e1", status: "running", input: { prompt: "hi" } });
+    const agent = new Agent("a1", { secret: SECRET, baseUrl: KERNEL, fetch: f });
+    let seen = "";
+    agent.bind(async () => { seen = execution().dispatchId; return {}; });
+    await agent.fetch(await webhookRequest(SECRET, "e1", "d-42"));
+    await agent.join();
+    expect(seen).toBe("d-42");
   });
 
   it("skips terminal executions without running process", async () => {

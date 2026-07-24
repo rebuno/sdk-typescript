@@ -1,7 +1,7 @@
 import { KernelClient, type FetchFn } from "./kernel.js";
 import { ExecutionContext } from "./execution.js";
 import { runWithContext } from "./context.js";
-import { Blocked, PolicyError, RateLimited, StepIDMismatch, Terminated, ToolError } from "./errors.js";
+import { Blocked, PolicyError, RateLimited, Terminated, ToolError } from "./errors.js";
 
 /** Minimal Standard Schema v1 shape we consume for optional input validation. */
 interface StandardSchema {
@@ -69,23 +69,24 @@ export class Agent<TInput = any, TOutput = unknown> {
     let payload: Record<string, unknown> | null = null;
     try { payload = JSON.parse(new TextDecoder().decode(raw)); } catch { payload = null; }
     const executionId = payload?.execution_id as string | undefined;
-    if (!executionId) return new Response(null, { status: 400 });
-    const task = this.safeHandle(executionId);
+    const dispatchId = payload?.dispatch_id as string | undefined;
+    if (!executionId || !dispatchId) return new Response(null, { status: 400 });
+    const task = this.safeHandle(executionId, dispatchId);
     this.tasks.add(task);
     void task.finally(() => this.tasks.delete(task));
     return new Response(null, { status: 200 });
   };
 
-  private async safeHandle(executionId: string): Promise<void> {
+  private async safeHandle(executionId: string, dispatchId: string): Promise<void> {
     try {
-      await this.handle(executionId);
+      await this.handle(executionId, dispatchId);
     } catch (e) {
       if (e instanceof Blocked || e instanceof Terminated) return;
       console.error(`rebuno: unhandled error handling execution ${executionId}`, e);
     }
   }
 
-  private async handle(executionId: string): Promise<void> {
+  private async handle(executionId: string, dispatchId: string): Promise<void> {
     if (!this.process) throw new Error("Agent.bind(process) was not called");
     const exec = await this.kernel.getExecution(executionId);
     if (exec.status === "completed" || exec.status === "failed" || exec.status === "cancelled") return;
@@ -93,11 +94,11 @@ export class Agent<TInput = any, TOutput = unknown> {
     const ctx = new ExecutionContext({
       kernel: this.kernel,
       executionId,
+      dispatchId,
       agentId: this.agentId,
       input: exec.input,
       status: exec.status,
     });
-    await ctx.hydrate();
 
     await runWithContext(ctx, async () => {
       let input = exec.input;
@@ -115,7 +116,7 @@ export class Agent<TInput = any, TOutput = unknown> {
         output = await this.process!(input as TInput);
       } catch (e) {
         if (e instanceof Blocked || e instanceof Terminated) throw e;
-        if (e instanceof PolicyError || e instanceof ToolError || e instanceof RateLimited || e instanceof StepIDMismatch) {
+        if (e instanceof PolicyError || e instanceof ToolError || e instanceof RateLimited) {
           await this.kernel.failExecution(executionId, String(e instanceof Error ? e.message : e));
           return;
         }

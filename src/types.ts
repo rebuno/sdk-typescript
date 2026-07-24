@@ -16,6 +16,8 @@ export interface Step {
   executionId: string;
   kind: string;
   target: string;
+  argsHash: string;
+  occurrence: number;
   status: string;
   idempotency: string;
   args: unknown;
@@ -25,6 +27,7 @@ export interface Step {
 
 export interface StepDecision {
   decision: string;
+  stepId: string;
   result: unknown;
   error: unknown;
   approvalId: string | null;
@@ -71,6 +74,8 @@ export function parseStep(r: Raw): Step {
     executionId: str(r.execution_id),
     kind: str(r.kind),
     target: str(r.target),
+    argsHash: str(r.args_hash),
+    occurrence: num(r.occurrence),
     status: str(r.status),
     idempotency: str(r.idempotency),
     args: r.args ?? null,
@@ -82,6 +87,7 @@ export function parseStep(r: Raw): Step {
 export function parseStepDecision(r: Raw): StepDecision {
   return {
     decision: str(r.decision),
+    stepId: str(r.step_id),
     result: r.result ?? null,
     error: r.error ?? null,
     approvalId: (r.approval_id ?? null) as string | null,

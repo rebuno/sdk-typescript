@@ -35,8 +35,8 @@ describe("parseStep", () => {
 
 describe("parseStepDecision", () => {
   it("maps decision fields", () => {
-    const d = parseStepDecision({ decision: "replay", result: 5, approval_id: null, reason: "" });
-    expect(d).toEqual({ decision: "replay", result: 5, error: null, approvalId: null, reason: "" });
+    const d = parseStepDecision({ decision: "replay", step_id: "s1", result: 5, approval_id: null, reason: "" });
+    expect(d).toEqual({ decision: "replay", stepId: "s1", result: 5, error: null, approvalId: null, reason: "" });
   });
 });
 
