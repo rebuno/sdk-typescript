@@ -1,19 +1,32 @@
-import { KernelClient, type FetchFn } from "./kernel.js";
-import { ExecutionContext } from "./execution.js";
 import { runWithContext } from "./context.js";
-import { Blocked, PolicyError, RateLimited, Terminated, ToolError } from "./errors.js";
+import {
+  Blocked,
+  PolicyError,
+  RateLimited,
+  Terminated,
+  ToolError,
+} from "./errors.js";
+import { ExecutionContext } from "./execution.js";
+import { type FetchFn, KernelClient } from "./kernel.js";
 
 /** Minimal Standard Schema v1 shape we consume for optional input validation. */
 interface StandardSchema {
   "~standard": {
-    validate: (value: unknown) =>
+    validate: (
+      value: unknown,
+    ) =>
       | { value: unknown; issues?: undefined }
       | { issues: ReadonlyArray<{ message: string }> }
-      | Promise<{ value: unknown; issues?: undefined } | { issues: ReadonlyArray<{ message: string }> }>;
+      | Promise<
+          | { value: unknown; issues?: undefined }
+          | { issues: ReadonlyArray<{ message: string }> }
+        >;
   };
 }
 
-export type ProcessFn<TInput = any, TOutput = unknown> = (input: TInput) => TOutput | Promise<TOutput>;
+export type ProcessFn<TInput = any, TOutput = unknown> = (
+  input: TInput,
+) => TOutput | Promise<TOutput>;
 
 export interface AgentOptions {
   secret?: string;
@@ -43,9 +56,16 @@ export class Agent<TInput = any, TOutput = unknown> {
     if (!agentId) throw new Error("agentId must not be empty");
     this.agentId = agentId;
     this.secret = opts.secret ?? process.env.REBUNO_AGENT_SECRET ?? "";
-    if (!this.secret) throw new Error("secret required (set REBUNO_AGENT_SECRET or pass secret)");
-    this.baseUrl = (opts.baseUrl ?? process.env.REBUNO_URL ?? "").replace(/\/+$/, "");
-    if (!this.baseUrl) throw new Error("baseUrl required (set REBUNO_URL or pass baseUrl)");
+    if (!this.secret)
+      throw new Error(
+        "secret required (set REBUNO_AGENT_SECRET or pass secret)",
+      );
+    this.baseUrl = (opts.baseUrl ?? process.env.REBUNO_URL ?? "").replace(
+      /\/+$/,
+      "",
+    );
+    if (!this.baseUrl)
+      throw new Error("baseUrl required (set REBUNO_URL or pass baseUrl)");
     this.webhookPath = opts.webhookPath ?? "/webhook";
     this.inputSchema = opts.inputSchema;
     this.kernel = new KernelClient({
@@ -65,9 +85,14 @@ export class Agent<TInput = any, TOutput = unknown> {
     const raw = new Uint8Array(await request.arrayBuffer());
     const sig = request.headers.get("Rebuno-Signature") ?? "";
     const { verifySignature } = await import("./crypto.js");
-    if (!(await verifySignature(this.secret, raw, sig))) return new Response(null, { status: 401 });
+    if (!(await verifySignature(this.secret, raw, sig)))
+      return new Response(null, { status: 401 });
     let payload: Record<string, unknown> | null = null;
-    try { payload = JSON.parse(new TextDecoder().decode(raw)); } catch { payload = null; }
+    try {
+      payload = JSON.parse(new TextDecoder().decode(raw));
+    } catch {
+      payload = null;
+    }
     const executionId = payload?.execution_id as string | undefined;
     const dispatchId = payload?.dispatch_id as string | undefined;
     if (!executionId || !dispatchId) return new Response(null, { status: 400 });
@@ -77,19 +102,30 @@ export class Agent<TInput = any, TOutput = unknown> {
     return new Response(null, { status: 200 });
   };
 
-  private async safeHandle(executionId: string, dispatchId: string): Promise<void> {
+  private async safeHandle(
+    executionId: string,
+    dispatchId: string,
+  ): Promise<void> {
     try {
       await this.handle(executionId, dispatchId);
     } catch (e) {
       if (e instanceof Blocked || e instanceof Terminated) return;
-      console.error(`rebuno: unhandled error handling execution ${executionId}`, e);
+      console.error(
+        `rebuno: unhandled error handling execution ${executionId}`,
+        e,
+      );
     }
   }
 
   private async handle(executionId: string, dispatchId: string): Promise<void> {
     if (!this.process) throw new Error("Agent.bind(process) was not called");
     const exec = await this.kernel.getExecution(executionId);
-    if (exec.status === "completed" || exec.status === "failed" || exec.status === "cancelled") return;
+    if (
+      exec.status === "completed" ||
+      exec.status === "failed" ||
+      exec.status === "cancelled"
+    )
+      return;
 
     const ctx = new ExecutionContext({
       kernel: this.kernel,
@@ -106,7 +142,10 @@ export class Agent<TInput = any, TOutput = unknown> {
         const res = await this.inputSchema["~standard"].validate(input);
         if ("issues" in res && res.issues) {
           const msg = res.issues.map((i) => i.message).join("; ");
-          await this.kernel.failExecution(executionId, `input validation failed: ${msg}`);
+          await this.kernel.failExecution(
+            executionId,
+            `input validation failed: ${msg}`,
+          );
           return;
         }
         input = (res as { value: unknown }).value;
@@ -116,12 +155,22 @@ export class Agent<TInput = any, TOutput = unknown> {
         output = await this.process!(input as TInput);
       } catch (e) {
         if (e instanceof Blocked || e instanceof Terminated) throw e;
-        if (e instanceof PolicyError || e instanceof ToolError || e instanceof RateLimited) {
-          await this.kernel.failExecution(executionId, String(e instanceof Error ? e.message : e));
+        if (
+          e instanceof PolicyError ||
+          e instanceof ToolError ||
+          e instanceof RateLimited
+        ) {
+          await this.kernel.failExecution(
+            executionId,
+            String(e instanceof Error ? e.message : e),
+          );
           return;
         }
         console.error(`rebuno: process error execution_id=${executionId}`, e);
-        await this.kernel.failExecution(executionId, String(e instanceof Error ? e.message : e));
+        await this.kernel.failExecution(
+          executionId,
+          String(e instanceof Error ? e.message : e),
+        );
         return;
       }
       await this.kernel.completeExecution(executionId, output);
@@ -138,7 +187,10 @@ export class Agent<TInput = any, TOutput = unknown> {
   }
 
   /** Bind the process and serve the webhook app with node:http (blocking-ish; resolves on server close). */
-  async serve(opts: ServeOptions, process?: ProcessFn<TInput, TOutput>): Promise<void> {
+  async serve(
+    opts: ServeOptions,
+    process?: ProcessFn<TInput, TOutput>,
+  ): Promise<void> {
     if (process) this.bind(process);
     const { createServer } = await import("node:http");
     const server = createServer(async (req, res) => {
@@ -152,7 +204,11 @@ export class Agent<TInput = any, TOutput = unknown> {
       const request = new Request(`http://localhost${req.url}`, {
         method: "POST",
         headers: Object.entries(req.headers).flatMap(([k, v]) =>
-          v == null ? [] : Array.isArray(v) ? v.map((vv) => [k, vv] as [string, string]) : [[k, v] as [string, string]],
+          v == null
+            ? []
+            : Array.isArray(v)
+              ? v.map((vv) => [k, vv] as [string, string])
+              : [[k, v] as [string, string]],
         ),
         body,
       });
@@ -160,8 +216,12 @@ export class Agent<TInput = any, TOutput = unknown> {
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer()));
     });
-    await new Promise<void>((resolve) => server.listen(opts.port, opts.host ?? "0.0.0.0", resolve));
-    console.log(`rebuno agent '${this.agentId}' listening on ${opts.host ?? "0.0.0.0"}:${opts.port}${this.webhookPath}`);
+    await new Promise<void>((resolve) =>
+      server.listen(opts.port, opts.host ?? "0.0.0.0", resolve),
+    );
+    console.log(
+      `rebuno agent '${this.agentId}' listening on ${opts.host ?? "0.0.0.0"}:${opts.port}${this.webhookPath}`,
+    );
     await new Promise<void>((resolve) => server.on("close", resolve));
   }
 }

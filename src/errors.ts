@@ -12,7 +12,12 @@ export class NetworkError extends RebunoError {}
 export class APIError extends RebunoError {
   code: string;
   statusCode: number;
-  constructor(message: string, code: string, statusCode: number, details?: Record<string, unknown>) {
+  constructor(
+    message: string,
+    code: string,
+    statusCode: number,
+    details?: Record<string, unknown>,
+  ) {
     super(message, details);
     this.code = code;
     this.statusCode = statusCode;
@@ -37,7 +42,10 @@ export class ToolError extends RebunoError {
   toolId: string;
   stepId: string;
   retryable: boolean;
-  constructor(message: string, opts: { toolId?: string; stepId?: string; retryable?: boolean } = {}) {
+  constructor(
+    message: string,
+    opts: { toolId?: string; stepId?: string; retryable?: boolean } = {},
+  ) {
     super(message);
     this.toolId = opts.toolId ?? "";
     this.stepId = opts.stepId ?? "";
@@ -65,7 +73,14 @@ export class Blocked extends RebunoError {
 /** Control-flow signal: the execution is terminal (e.g. cancelled). */
 export class Terminated extends RebunoError {}
 
-const ERROR_BY_CODE: Record<string, new (m: string, c: string, s: number) => APIError> = {
+const ERROR_BY_CODE: Record<
+  string,
+  new (
+    m: string,
+    c: string,
+    s: number,
+  ) => APIError
+> = {
   not_found: NotFoundError,
   validation_error: ValidationError,
   unauthorized: UnauthorizedError,
@@ -73,7 +88,12 @@ const ERROR_BY_CODE: Record<string, new (m: string, c: string, s: number) => API
   conflict: APIError,
 };
 
-export function errorFromResponse(code: string, message: string, statusCode: number, ruleId = ""): RebunoError {
+export function errorFromResponse(
+  code: string,
+  message: string,
+  statusCode: number,
+  ruleId = "",
+): RebunoError {
   if (code === "policy_denied") return new PolicyError(message, ruleId);
   const Cls = ERROR_BY_CODE[code] ?? APIError;
   return new Cls(message, code, statusCode);

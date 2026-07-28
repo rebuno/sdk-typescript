@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Client } from "../src/client.js";
 import { NotFoundError } from "../src/errors.js";
 
@@ -12,8 +12,13 @@ describe("Client", () => {
       expect(url).toBe("http://k/v0/executions");
       expect(init.method).toBe("POST");
       expect((init.headers as any).Authorization).toBe("Bearer key");
-      expect(JSON.parse(init.body)).toEqual({ agent_id: "a1", input: { p: 1 } });
-      return new Response(JSON.stringify({ id: "e1", status: "pending" }), { status: 200 });
+      expect(JSON.parse(init.body)).toEqual({
+        agent_id: "a1",
+        input: { p: 1 },
+      });
+      return new Response(JSON.stringify({ id: "e1", status: "pending" }), {
+        status: 200,
+      });
     });
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     const e = await c.create("a1", { p: 1 });
@@ -21,7 +26,12 @@ describe("Client", () => {
   });
 
   it("get maps 404 to NotFoundError", async () => {
-    const f = fakeFetch(() => new Response(JSON.stringify({ code: "not_found", message: "gone" }), { status: 404 }));
+    const f = fakeFetch(
+      () =>
+        new Response(JSON.stringify({ code: "not_found", message: "gone" }), {
+          status: 404,
+        }),
+    );
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     await expect(c.get("missing")).rejects.toBeInstanceOf(NotFoundError);
   });
@@ -29,7 +39,9 @@ describe("Client", () => {
   it("listApprovals passes status and parses the list", async () => {
     const f = fakeFetch((url) => {
       expect(url).toBe("http://k/v0/approvals?status=pending");
-      return new Response(JSON.stringify([{ id: "ap1", step_id: "s1" }]), { status: 200 });
+      return new Response(JSON.stringify([{ id: "ap1", step_id: "s1" }]), {
+        status: 200,
+      });
     });
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     const list = await c.listApprovals();
@@ -40,7 +52,10 @@ describe("Client", () => {
   it("listSteps omits status when unset and parses the list", async () => {
     const f = fakeFetch((url) => {
       expect(url).toBe("http://k/v0/executions/e1/steps");
-      return new Response(JSON.stringify([{ step_id: "s1", kind: "tool_call" }]), { status: 200 });
+      return new Response(
+        JSON.stringify([{ step_id: "s1", kind: "tool_call" }]),
+        { status: 200 },
+      );
     });
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     const list = await c.listSteps("e1");
@@ -60,7 +75,9 @@ describe("Client", () => {
   it("getStep fetches one step by id", async () => {
     const f = fakeFetch((url) => {
       expect(url).toBe("http://k/v0/executions/e1/steps/s1");
-      return new Response(JSON.stringify({ step_id: "s1", target: "search" }), { status: 200 });
+      return new Response(JSON.stringify({ step_id: "s1", target: "search" }), {
+        status: 200,
+      });
     });
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     const step = await c.getStep("e1", "s1");
@@ -71,7 +88,10 @@ describe("Client", () => {
   it("grantApproval posts decided_by + rationale", async () => {
     const f = fakeFetch((url, init) => {
       expect(url).toBe("http://k/v0/approvals/ap1/grant");
-      expect(JSON.parse(init.body)).toEqual({ decided_by: "alice", rationale: "ok" });
+      expect(JSON.parse(init.body)).toEqual({
+        decided_by: "alice",
+        rationale: "ok",
+      });
       return new Response(null, { status: 200 });
     });
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });

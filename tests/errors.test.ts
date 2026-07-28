@@ -1,8 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
-  RebunoError, APIError, ValidationError, UnauthorizedError, ForbiddenError, NotFoundError,
-  PolicyError, ToolError, RateLimited, Blocked, Terminated,
+  APIError,
+  Blocked,
   errorFromResponse,
+  ForbiddenError,
+  NotFoundError,
+  PolicyError,
+  RateLimited,
+  RebunoError,
+  Terminated,
+  ToolError,
+  UnauthorizedError,
+  ValidationError,
 } from "../src/errors.js";
 
 describe("errorFromResponse", () => {
@@ -13,13 +22,19 @@ describe("errorFromResponse", () => {
     expect((e as PolicyError).code).toBe("policy_denied");
   });
   it("maps not_found to NotFoundError", () => {
-    expect(errorFromResponse("not_found", "x", 404)).toBeInstanceOf(NotFoundError);
+    expect(errorFromResponse("not_found", "x", 404)).toBeInstanceOf(
+      NotFoundError,
+    );
   });
   it("maps validation_error to ValidationError", () => {
-    expect(errorFromResponse("validation_error", "x", 400)).toBeInstanceOf(ValidationError);
+    expect(errorFromResponse("validation_error", "x", 400)).toBeInstanceOf(
+      ValidationError,
+    );
   });
   it("maps unauthorized to UnauthorizedError", () => {
-    expect(errorFromResponse("unauthorized", "x", 401)).toBeInstanceOf(UnauthorizedError);
+    expect(errorFromResponse("unauthorized", "x", 401)).toBeInstanceOf(
+      UnauthorizedError,
+    );
   });
   it("maps forbidden to ForbiddenError", () => {
     const e = errorFromResponse("forbidden", "not an approver", 403);

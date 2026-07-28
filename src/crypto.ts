@@ -16,10 +16,13 @@ function toHex(buf: ArrayBuffer): string {
 }
 
 /** `sha256=<hex(HMAC-SHA256(secret, body))>`. */
-export async function signBody(secret: string, body: Uint8Array): Promise<string> {
+export async function signBody(
+  secret: string,
+  body: Uint8Array,
+): Promise<string> {
   const key = await hmacKey(secret);
   const sig = await crypto.subtle.sign("HMAC", key, body as BufferSource);
-  return "sha256=" + toHex(sig);
+  return `sha256=${toHex(sig)}`;
 }
 
 /** Constant-time string compare (equal-length only). */
@@ -30,7 +33,11 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
-export async function verifySignature(secret: string, body: Uint8Array, header: string): Promise<boolean> {
+export async function verifySignature(
+  secret: string,
+  body: Uint8Array,
+  header: string,
+): Promise<boolean> {
   if (!header.startsWith("sha256=")) return false;
   const expected = await signBody(secret, body);
   return timingSafeEqual(header, expected);

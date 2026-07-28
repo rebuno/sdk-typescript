@@ -22,7 +22,10 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
   const modelField = opts.modelField ?? "model";
   const inner = opts.fetch ?? fetch;
 
-  return (async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+  return (async (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ): Promise<Response> => {
     const ctx = getExecution();
     if (!ctx) return inner(input, init);
 
@@ -31,7 +34,8 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
 
     const target = String(payload[modelField] ?? "");
     const { stepId, dec } = await ctx.beginLlm(target, payload);
-    if (dec.decision === "replay") return responseFromRecord(dec.result as ResponseRecord);
+    if (dec.decision === "replay")
+      return responseFromRecord(dec.result as ResponseRecord);
 
     const resp = await inner(input, init);
     const contentType = resp.headers.get("content-type") ?? "";
@@ -54,7 +58,9 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
     }
     const record: ResponseRecord = {
       status: resp.status,
-      headers: { "content-type": resp.headers.get("content-type") ?? "application/json" },
+      headers: {
+        "content-type": resp.headers.get("content-type") ?? "application/json",
+      },
       body,
     };
     await ctx.recordLlm(stepId, record);
@@ -71,7 +77,11 @@ export const rebunoFetch: FetchFn = createRebunoFetch();
  * when the stream ends. Recording fires once, from whichever comes first: the
  * source reaching EOF, or the consumer cancelling. A mid-stream error fails the step.
  */
-function teeResponse(ctx: ExecutionContext, stepId: string, resp: Response): Response {
+function teeResponse(
+  ctx: ExecutionContext,
+  stepId: string,
+  resp: Response,
+): Response {
   const contentType = resp.headers.get("content-type") ?? "text/event-stream";
   const reader = resp.body!.getReader();
   const decoder = new TextDecoder("utf-8"); // incremental: never splits a UTF-8 char
@@ -84,7 +94,11 @@ function teeResponse(ctx: ExecutionContext, stepId: string, resp: Response): Res
 
   const flush = async () => {
     for (let i = 0; i < pending.length; i += DELTA_MAX_CHARS) {
-      await ctx.publishLlmDelta(stepId, seq, pending.slice(i, i + DELTA_MAX_CHARS));
+      await ctx.publishLlmDelta(
+        stepId,
+        seq,
+        pending.slice(i, i + DELTA_MAX_CHARS),
+      );
       seq++;
     }
     pending = "";
@@ -100,9 +114,16 @@ function teeResponse(ctx: ExecutionContext, stepId: string, resp: Response): Res
         return;
       }
       const tail = decoder.decode();
-      if (tail) { chunks.push(tail); pending += tail; }
+      if (tail) {
+        chunks.push(tail);
+        pending += tail;
+      }
       if (pending) await flush();
-      await ctx.recordLlm(stepId, { status: resp.status, headers: { "content-type": contentType }, body: chunks.join("") });
+      await ctx.recordLlm(stepId, {
+        status: resp.status,
+        headers: { "content-type": contentType },
+        body: chunks.join(""),
+      });
     } finally {
       stopHb();
     }
@@ -120,10 +141,16 @@ function teeResponse(ctx: ExecutionContext, stepId: string, resp: Response): Res
         // Accumulate before enqueuing: a consumer that breaks right after
         // receiving a chunk never resumes us, so recording after would drop it.
         const text = decoder.decode(value, { stream: true });
-        if (text) { chunks.push(text); pending += text; }
+        if (text) {
+          chunks.push(text);
+          pending += text;
+        }
         controller.enqueue(value);
         const now = Date.now();
-        if (pending.length >= DELTA_FLUSH_CHARS || now - lastFlush >= DELTA_FLUSH_INTERVAL_MS) {
+        if (
+          pending.length >= DELTA_FLUSH_CHARS ||
+          now - lastFlush >= DELTA_FLUSH_INTERVAL_MS
+        ) {
           await flush();
           lastFlush = now;
         }
@@ -139,7 +166,10 @@ function teeResponse(ctx: ExecutionContext, stepId: string, resp: Response): Res
     },
   });
 
-  return new Response(stream, { status: resp.status, headers: { "content-type": contentType } });
+  return new Response(stream, {
+    status: resp.status,
+    headers: { "content-type": contentType },
+  });
 }
 
 function jsonBody(init?: RequestInit): Record<string, unknown> | null {
@@ -147,7 +177,9 @@ function jsonBody(init?: RequestInit): Record<string, unknown> | null {
   if (typeof body !== "string") return null; // only string JSON bodies are identifiable LLM calls
   try {
     const parsed = JSON.parse(body);
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }
@@ -155,12 +187,17 @@ function jsonBody(init?: RequestInit): Record<string, unknown> | null {
 
 /** True for a Server-Sent-Events content type. */
 function isEventStream(contentType: string): boolean {
-  return contentType.split(";", 1)[0].trim().toLowerCase() === "text/event-stream";
+  return (
+    contentType.split(";", 1)[0].trim().toLowerCase() === "text/event-stream"
+  );
 }
 
 function responseFromRecord(record: ResponseRecord): Response {
   if (!record || typeof record !== "object") {
-    return new Response(JSON.stringify(record), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(record), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   }
   return new Response(record.body ?? "", {
     status: record.status ?? 200,

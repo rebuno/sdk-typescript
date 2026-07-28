@@ -16,6 +16,7 @@ export function getExecution(): ExecutionContext | null {
 /** Current execution context; throws if accessed with no active execution. Public accessor. */
 export function execution(): ExecutionContext {
   const ctx = storage.getStore();
-  if (!ctx) throw new Error("execution() accessed without an active execution context");
+  if (!ctx)
+    throw new Error("execution() accessed without an active execution context");
   return ctx;
 }

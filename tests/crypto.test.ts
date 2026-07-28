@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { signBody, verifySignature } from "../src/crypto.js";
 import { createHmac } from "node:crypto";
+import { describe, expect, it } from "vitest";
+import { signBody, verifySignature } from "../src/crypto.js";
 
 const SECRET = "dev-secret";
 
@@ -8,7 +8,7 @@ describe("signBody", () => {
   it("produces sha256=<hex> matching node:crypto", async () => {
     const body = new TextEncoder().encode('{"x":1}');
     const sig = await signBody(SECRET, body);
-    const expected = "sha256=" + createHmac("sha256", SECRET).update(body).digest("hex");
+    const expected = `sha256=${createHmac("sha256", SECRET).update(body).digest("hex")}`;
     expect(sig).toBe(expected);
   });
 });

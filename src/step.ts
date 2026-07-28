@@ -9,6 +9,12 @@ export async function step<T = unknown>(
   idempotency: Idempotency = "safe_to_retry",
 ): Promise<T> {
   const ctx = getExecution();
-  if (!ctx) throw new Error(`rebuno step('${name}') called outside an active execution.`);
-  return (await ctx.invokeTool(name, args, { idempotency, run: async () => fn(args) })) as T;
+  if (!ctx)
+    throw new Error(
+      `rebuno step('${name}') called outside an active execution.`,
+    );
+  return (await ctx.invokeTool(name, args, {
+    idempotency,
+    run: async () => fn(args),
+  })) as T;
 }

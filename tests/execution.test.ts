@@ -1,13 +1,21 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { execution, getExecution, runWithContext } from "../src/context.js";
+import { Blocked, PolicyError, ToolError } from "../src/errors.js";
 import { ExecutionContext } from "../src/execution.js";
-import { runWithContext, getExecution, execution } from "../src/context.js";
-import { PolicyError, RateLimited, Blocked, Terminated, ToolError } from "../src/errors.js";
 
 /** Stands in for the kernel: assigns each submitted step an id, the way the real
  * one does, so decisions carry the id the SDK must use to complete them. */
 function fakeKernel(overrides: Partial<Record<string, any>> = {}) {
   let n = 0;
-  const decide = overrides.decide ?? (() => ({ decision: "proceed", result: null, error: null, approvalId: null, reason: "" }));
+  const decide =
+    overrides.decide ??
+    (() => ({
+      decision: "proceed",
+      result: null,
+      error: null,
+      approvalId: null,
+      reason: "",
+    }));
   delete overrides.decide;
   return {
     submitStep: vi.fn(async () => ({ stepId: `step-${++n}`, ...decide() })),
@@ -19,7 +27,14 @@ function fakeKernel(overrides: Partial<Record<string, any>> = {}) {
 }
 
 function ctxWith(kernel: any) {
-  return new ExecutionContext({ kernel, executionId: "e1", dispatchId: "d1", agentId: "a", input: { p: 1 }, status: "running" });
+  return new ExecutionContext({
+    kernel,
+    executionId: "e1",
+    dispatchId: "d1",
+    agentId: "a",
+    input: { p: 1 },
+    status: "running",
+  });
 }
 
 describe("ambient context", () => {
@@ -40,14 +55,24 @@ describe("invokeTool", () => {
   it("proceed runs the body and completes the step", async () => {
     const kernel = fakeKernel();
     const ctx = ctxWith(kernel);
-    const out = await ctx.invokeTool("search", { q: "x" }, { run: async () => [1, 2] });
+    const out = await ctx.invokeTool(
+      "search",
+      { q: "x" },
+      { run: async () => [1, 2] },
+    );
     expect(out).toEqual([1, 2]);
     expect(kernel.completeStep).toHaveBeenCalledOnce();
   });
 
   it("replays a recorded terminal step without running the body", async () => {
     const kernel = fakeKernel({
-      decide: () => ({ decision: "replay", result: "cached", error: null, approvalId: null, reason: "" }),
+      decide: () => ({
+        decision: "replay",
+        result: "cached",
+        error: null,
+        approvalId: null,
+        reason: "",
+      }),
     });
     const ctx = ctxWith(kernel);
     const body = vi.fn(async () => "fresh");
@@ -72,25 +97,50 @@ describe("invokeTool", () => {
 
   it("maps denied decision to PolicyError", async () => {
     const kernel = fakeKernel({
-      decide: () => ({ decision: "denied", result: null, error: null, approvalId: null, reason: "no" }),
+      decide: () => ({
+        decision: "denied",
+        result: null,
+        error: null,
+        approvalId: null,
+        reason: "no",
+      }),
     });
     const ctx = ctxWith(kernel);
-    await expect(ctx.invokeTool("t", {}, { run: async () => 1 })).rejects.toBeInstanceOf(PolicyError);
+    await expect(
+      ctx.invokeTool("t", {}, { run: async () => 1 }),
+    ).rejects.toBeInstanceOf(PolicyError);
   });
 
   it("maps blocked decision to Blocked", async () => {
     const kernel = fakeKernel({
-      decide: () => ({ decision: "blocked", result: null, error: null, approvalId: "ap1", reason: "" }),
+      decide: () => ({
+        decision: "blocked",
+        result: null,
+        error: null,
+        approvalId: "ap1",
+        reason: "",
+      }),
     });
     const ctx = ctxWith(kernel);
-    await expect(ctx.invokeTool("t", {}, { run: async () => 1 })).rejects.toBeInstanceOf(Blocked);
+    await expect(
+      ctx.invokeTool("t", {}, { run: async () => 1 }),
+    ).rejects.toBeInstanceOf(Blocked);
   });
 
   it("body throwing yields ToolError and records a step failure", async () => {
     const kernel = fakeKernel();
     const ctx = ctxWith(kernel);
-    await expect(ctx.invokeTool("t", {}, { run: async () => { throw new Error("boom"); } }))
-      .rejects.toBeInstanceOf(ToolError);
+    await expect(
+      ctx.invokeTool(
+        "t",
+        {},
+        {
+          run: async () => {
+            throw new Error("boom");
+          },
+        },
+      ),
+    ).rejects.toBeInstanceOf(ToolError);
     expect(kernel.failStep).toHaveBeenCalledOnce();
   });
 
@@ -99,6 +149,9 @@ describe("invokeTool", () => {
     const ctx = ctxWith(kernel);
     await ctx.invokeTool("t", { a: 1 }, { run: async () => 1 });
     await ctx.invokeTool("t", { a: 1 }, { run: async () => 2 });
-    expect(kernel.completeStep.mock.calls.map((c: any[]) => c[1])).toEqual(["step-1", "step-2"]);
+    expect(kernel.completeStep.mock.calls.map((c: any[]) => c[1])).toEqual([
+      "step-1",
+      "step-2",
+    ]);
   });
 });

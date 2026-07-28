@@ -1,5 +1,10 @@
 export type ExecutionStatus =
-  | "pending" | "running" | "blocked" | "completed" | "failed" | "cancelled";
+  | "pending"
+  | "running"
+  | "blocked"
+  | "completed"
+  | "failed"
+  | "cancelled";
 
 export interface Execution {
   id: string;
@@ -62,7 +67,7 @@ export function parseExecution(r: Raw): Execution {
     agentId: str(r.agent_id),
     agentVersion: str(r.agent_version),
     input: r.input ?? null,
-    status: (str(r.status, "pending") as ExecutionStatus),
+    status: str(r.status, "pending") as ExecutionStatus,
     output: r.output ?? null,
     failureReason: str(r.failure_reason),
   };

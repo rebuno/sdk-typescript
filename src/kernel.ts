@@ -1,6 +1,13 @@
 import { signBody } from "./crypto.js";
 import { errorFromResponse, NetworkError, NotFoundError } from "./errors.js";
-import { parseExecution, parseStep, parseStepDecision, type Execution, type Step, type StepDecision } from "./types.js";
+import {
+  type Execution,
+  parseExecution,
+  parseStep,
+  parseStepDecision,
+  type Step,
+  type StepDecision,
+} from "./types.js";
 
 export type FetchFn = typeof fetch;
 
@@ -30,7 +37,12 @@ export class KernelClient {
     this.fetchImpl = opts.fetch ?? fetch;
   }
 
-  private async send(method: string, path: string, body: Uint8Array, extra?: Record<string, string>): Promise<Response> {
+  private async send(
+    method: string,
+    path: string,
+    body: Uint8Array,
+    extra?: Record<string, string>,
+  ): Promise<Response> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "Rebuno-Agent-Id": this.agentId,
@@ -63,7 +75,11 @@ export class KernelClient {
 
   async getStep(executionId: string, stepId: string): Promise<Step | null> {
     try {
-      const r = await this.send("GET", `/v0/executions/${executionId}/steps/${stepId}`, EMPTY);
+      const r = await this.send(
+        "GET",
+        `/v0/executions/${executionId}/steps/${stepId}`,
+        EMPTY,
+      );
       return parseStep(await r.json());
     } catch (e) {
       if (e instanceof NotFoundError) return null;
@@ -73,23 +89,68 @@ export class KernelClient {
 
   async submitStep(
     executionId: string,
-    p: { kind: string; target: string; args: unknown; idempotency: string; dispatchId: string },
+    p: {
+      kind: string;
+      target: string;
+      args: unknown;
+      idempotency: string;
+      dispatchId: string;
+    },
   ): Promise<StepDecision> {
-    const body = enc(JSON.stringify({ kind: p.kind, target: p.target, args: p.args, idempotency: p.idempotency }));
-    const r = await this.send("POST", `/v0/executions/${executionId}/steps`, body, { "Rebuno-Dispatch-Id": p.dispatchId });
+    const body = enc(
+      JSON.stringify({
+        kind: p.kind,
+        target: p.target,
+        args: p.args,
+        idempotency: p.idempotency,
+      }),
+    );
+    const r = await this.send(
+      "POST",
+      `/v0/executions/${executionId}/steps`,
+      body,
+      {
+        "Rebuno-Dispatch-Id": p.dispatchId,
+      },
+    );
     return parseStepDecision(await r.json());
   }
 
-  async completeStep(executionId: string, stepId: string, result: unknown): Promise<void> {
-    await this.send("POST", `/v0/executions/${executionId}/steps/${stepId}/complete`, enc(JSON.stringify({ result })));
+  async completeStep(
+    executionId: string,
+    stepId: string,
+    result: unknown,
+  ): Promise<void> {
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/steps/${stepId}/complete`,
+      enc(JSON.stringify({ result })),
+    );
   }
 
-  async failStep(executionId: string, stepId: string, error: unknown): Promise<void> {
-    await this.send("POST", `/v0/executions/${executionId}/steps/${stepId}/fail`, enc(JSON.stringify({ error })));
+  async failStep(
+    executionId: string,
+    stepId: string,
+    error: unknown,
+  ): Promise<void> {
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/steps/${stepId}/fail`,
+      enc(JSON.stringify({ error })),
+    );
   }
 
-  async streamDelta(executionId: string, stepId: string, seq: number, data: string): Promise<void> {
-    await this.send("POST", `/v0/executions/${executionId}/steps/${stepId}/stream`, enc(JSON.stringify({ seq, data })));
+  async streamDelta(
+    executionId: string,
+    stepId: string,
+    seq: number,
+    data: string,
+  ): Promise<void> {
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/steps/${stepId}/stream`,
+      enc(JSON.stringify({ seq, data })),
+    );
   }
 
   async heartbeat(executionId: string): Promise<void> {
@@ -97,19 +158,36 @@ export class KernelClient {
   }
 
   async completeExecution(executionId: string, output: unknown): Promise<void> {
-    await this.send("POST", `/v0/executions/${executionId}/complete`, enc(JSON.stringify({ output })));
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/complete`,
+      enc(JSON.stringify({ output })),
+    );
   }
 
   async failExecution(executionId: string, error: string): Promise<void> {
-    await this.send("POST", `/v0/executions/${executionId}/fail`, enc(JSON.stringify({ error })));
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/fail`,
+      enc(JSON.stringify({ error })),
+    );
   }
 }
 
 async function errorFromResp(resp: Response): Promise<Error> {
   const text = await resp.text();
   let data: Record<string, unknown> = {};
-  try { data = JSON.parse(text) as Record<string, unknown>; } catch { /* non-JSON */ }
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    /* non-JSON */
+  }
   const code = (data.code as string) ?? "internal_error";
   const message = (data.message as string) ?? (text || "request failed");
-  return errorFromResponse(code, message, resp.status, (data.rule_id as string) ?? "");
+  return errorFromResponse(
+    code,
+    message,
+    resp.status,
+    (data.rule_id as string) ?? "",
+  );
 }

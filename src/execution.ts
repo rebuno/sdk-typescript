@@ -1,5 +1,10 @@
 import {
-  Blocked, PolicyError, RateLimited, RebunoError, Terminated, ToolError,
+  Blocked,
+  PolicyError,
+  RateLimited,
+  RebunoError,
+  Terminated,
+  ToolError,
 } from "./errors.js";
 import type { KernelClient } from "./kernel.js";
 import type { StepDecision } from "./types.js";
@@ -42,31 +47,50 @@ export class ExecutionContext {
    * recorded no step (`rate_limited`, `execution_*`), which
    * {@link raiseForDecision} turns into an exception before it is used.
    */
-  private async submit(p: { kind: string; target: string; args: unknown; idempotency: string }): Promise<{ stepId: string; dec: StepDecision }> {
-    const dec = await this.kernel.submitStep(this.id, { ...p, dispatchId: this.dispatchId });
+  private async submit(p: {
+    kind: string;
+    target: string;
+    args: unknown;
+    idempotency: string;
+  }): Promise<{ stepId: string; dec: StepDecision }> {
+    const dec = await this.kernel.submitStep(this.id, {
+      ...p,
+      dispatchId: this.dispatchId,
+    });
     return { stepId: dec.stepId, dec };
   }
 
   private raiseForDecision(dec: StepDecision): void {
     switch (dec.decision) {
-      case "denied": throw new PolicyError(dec.reason || "denied by policy");
-      case "rate_limited": throw new RateLimited(dec.reason || "rate_limit_exceeded");
+      case "denied":
+        throw new PolicyError(dec.reason || "denied by policy");
+      case "rate_limited":
+        throw new RateLimited(dec.reason || "rate_limit_exceeded");
       case "blocked":
-      case "execution_blocked": throw new Blocked(dec.approvalId);
-      case "execution_terminal": throw new Terminated("execution is terminal");
-      case "proceed": return;
-      default: throw new RebunoError(`unexpected step decision: ${dec.decision}`);
+      case "execution_blocked":
+        throw new Blocked(dec.approvalId);
+      case "execution_terminal":
+        throw new Terminated("execution is terminal");
+      case "proceed":
+        return;
+      default:
+        throw new RebunoError(`unexpected step decision: ${dec.decision}`);
     }
   }
 
   /** Start renewing the dispatch lease in the background; returns a stop function
    * the caller must invoke when the effect finishes. */
   startHeartbeat(intervalMs = 30000): () => void {
-    const hb = setInterval(() => { void this.kernel.heartbeat(this.id).catch(() => {}); }, intervalMs);
+    const hb = setInterval(() => {
+      void this.kernel.heartbeat(this.id).catch(() => {});
+    }, intervalMs);
     return () => clearInterval(hb);
   }
 
-  private async runWithHeartbeat<T>(run: () => Promise<T>, intervalMs = 30000): Promise<T> {
+  private async runWithHeartbeat<T>(
+    run: () => Promise<T>,
+    intervalMs = 30000,
+  ): Promise<T> {
     const stop = this.startHeartbeat(intervalMs);
     try {
       return await run();
@@ -82,10 +106,19 @@ export class ExecutionContext {
   ): Promise<unknown> {
     const idempotency = opts.idempotency ?? "safe_to_retry";
     const kind = "tool_call";
-    const { stepId, dec } = await this.submit({ kind, target, args, idempotency });
+    const { stepId, dec } = await this.submit({
+      kind,
+      target,
+      args,
+      idempotency,
+    });
 
     if (dec.decision === "replay") {
-      if (dec.error != null) throw new ToolError(errorMessage(dec.error), { toolId: target, stepId });
+      if (dec.error != null)
+        throw new ToolError(errorMessage(dec.error), {
+          toolId: target,
+          stepId,
+        });
       return dec.result;
     }
     this.raiseForDecision(dec);
@@ -98,10 +131,19 @@ export class ExecutionContext {
     try {
       result = await this.runWithHeartbeat(opts.run);
     } catch (e) {
-      if (e instanceof Blocked || e instanceof Terminated || e instanceof PolicyError || e instanceof RateLimited) throw e;
+      if (
+        e instanceof Blocked ||
+        e instanceof Terminated ||
+        e instanceof PolicyError ||
+        e instanceof RateLimited
+      )
+        throw e;
       await this.failStepQuietly(stepId, e);
       if (e instanceof ToolError) throw e;
-      throw new ToolError(String(e instanceof Error ? e.message : e), { toolId: target, stepId });
+      throw new ToolError(String(e instanceof Error ? e.message : e), {
+        toolId: target,
+        stepId,
+      });
     }
     await this.kernel.completeStep(this.id, stepId, result);
     return result;
@@ -110,8 +152,16 @@ export class ExecutionContext {
   /** Submit an `llm_call` step. Returns `(stepId, decision)`: `proceed` (run the
    * provider call, then record it via {@link recordLlm}) or `replay` (rebuild the
    * response from `decision.result`). Other decisions raise the matching error. */
-  async beginLlm(target: string, request: unknown): Promise<{ stepId: string; dec: StepDecision }> {
-    const { stepId, dec } = await this.submit({ kind: "llm_call", target, args: request, idempotency: "safe_to_retry" });
+  async beginLlm(
+    target: string,
+    request: unknown,
+  ): Promise<{ stepId: string; dec: StepDecision }> {
+    const { stepId, dec } = await this.submit({
+      kind: "llm_call",
+      target,
+      args: request,
+      idempotency: "safe_to_retry",
+    });
     if (dec.decision === "replay") {
       if (dec.error != null) throw new RebunoError(errorMessage(dec.error));
       return { stepId, dec };
@@ -122,10 +172,16 @@ export class ExecutionContext {
 
   /** Publish a live delta for an in-flight streamed step. Best-effort: deltas are
    * advisory, so failures are swallowed — the recorded whole is the durable result. */
-  async publishLlmDelta(stepId: string, seq: number, data: string): Promise<void> {
+  async publishLlmDelta(
+    stepId: string,
+    seq: number,
+    data: string,
+  ): Promise<void> {
     try {
       await this.kernel.streamDelta(this.id, stepId, seq, data);
-    } catch { /* best effort */ }
+    } catch {
+      /* best effort */
+    }
   }
 
   /** Record the assembled (streamed or whole) response as the step's durable result. */
@@ -135,8 +191,12 @@ export class ExecutionContext {
 
   async failStepQuietly(stepId: string, error: unknown): Promise<void> {
     try {
-      await this.kernel.failStep(this.id, stepId, { message: String(error instanceof Error ? error.message : error) });
-    } catch { /* best effort */ }
+      await this.kernel.failStep(this.id, stepId, {
+        message: String(error instanceof Error ? error.message : error),
+      });
+    } catch {
+      /* best effort */
+    }
   }
 }
 

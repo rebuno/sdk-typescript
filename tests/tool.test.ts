@@ -1,23 +1,40 @@
-import { describe, it, expect, vi } from "vitest";
-import { defineTool, wrapTool } from "../src/tool.js";
-import { ExecutionContext } from "../src/execution.js";
+import { describe, expect, it, vi } from "vitest";
 import { runWithContext } from "../src/context.js";
+import { ExecutionContext } from "../src/execution.js";
+import { defineTool, wrapTool } from "../src/tool.js";
 
 function fakeKernel() {
   return {
     listTerminalSteps: vi.fn(async () => []),
-    submitStep: vi.fn(async () => ({ decision: "proceed", result: null, error: null, approvalId: null, reason: "" })),
+    submitStep: vi.fn(async () => ({
+      decision: "proceed",
+      result: null,
+      error: null,
+      approvalId: null,
+      reason: "",
+    })),
     completeStep: vi.fn(async () => {}),
     failStep: vi.fn(async () => {}),
     heartbeat: vi.fn(async () => {}),
   };
 }
-const ctx = (k: any) => new ExecutionContext({ kernel: k, executionId: "e1", agentId: "a", input: {} });
+const ctx = (k: any) =>
+  new ExecutionContext({
+    kernel: k,
+    executionId: "e1",
+    agentId: "a",
+    input: {},
+  });
 
 describe("defineTool", () => {
   it("returns a plain object with name/description/inputSchema and a durable execute", async () => {
     const schema = { type: "object" };
-    const t = defineTool({ name: "search", description: "d", inputSchema: schema, execute: async ({ q }: any) => [q] });
+    const t = defineTool({
+      name: "search",
+      description: "d",
+      inputSchema: schema,
+      execute: async ({ q }: any) => [q],
+    });
     expect(t.name).toBe("search");
     expect(t.description).toBe("d");
     expect(t.inputSchema).toBe(schema);
@@ -35,7 +52,11 @@ describe("defineTool", () => {
   });
 
   it("passes idempotency through to the step", async () => {
-    const t = defineTool({ name: "charge", idempotency: "at_most_once", execute: async () => "ok" });
+    const t = defineTool({
+      name: "charge",
+      idempotency: "at_most_once",
+      execute: async () => "ok",
+    });
     const k = fakeKernel();
     await runWithContext(ctx(k), () => t.execute({}));
     expect(k.submitStep.mock.calls[0][1].idempotency).toBe("at_most_once");
@@ -57,6 +78,9 @@ describe("wrapTool", () => {
     const out = await runWithContext(ctx(k), () => t.execute({ a: 1 }));
     expect(invoke).toHaveBeenCalledWith({ a: 1, injected: true });
     expect(out).toEqual({ a: 1, injected: true });
-    expect(k.submitStep.mock.calls[0][1].args).toEqual({ a: 1, injected: true });
+    expect(k.submitStep.mock.calls[0][1].args).toEqual({
+      a: 1,
+      injected: true,
+    });
   });
 });

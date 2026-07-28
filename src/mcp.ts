@@ -1,6 +1,9 @@
-import { wrapTool, type Idempotency, type RebunoTool } from "./tool.js";
+import { type Idempotency, type RebunoTool, wrapTool } from "./tool.js";
 
-type CallFn = (toolName: string, args: Record<string, unknown>) => unknown | Promise<unknown>;
+type CallFn = (
+  toolName: string,
+  args: Record<string, unknown>,
+) => unknown | Promise<unknown>;
 type ToResult = (raw: unknown) => unknown;
 
 export interface WrapMcpOptions {
@@ -10,11 +13,17 @@ export interface WrapMcpOptions {
   toResult?: ToResult;
 }
 
-export function wrapMcpTools(descriptors: Iterable<unknown>, opts: WrapMcpOptions): RebunoTool[] {
+export function wrapMcpTools(
+  descriptors: Iterable<unknown>,
+  opts: WrapMcpOptions,
+): RebunoTool[] {
   return [...descriptors].map((d) => wrapMcpTool(d, opts));
 }
 
-export function wrapMcpTool(descriptor: unknown, opts: WrapMcpOptions): RebunoTool {
+export function wrapMcpTool(
+  descriptor: unknown,
+  opts: WrapMcpOptions,
+): RebunoTool {
   const name = field<string>(descriptor, "name") ?? "";
   const description = field<string>(descriptor, "description") ?? "";
   const schema = field<unknown>(descriptor, "inputSchema") ?? null;
@@ -32,7 +41,8 @@ export function wrapMcpTool(descriptor: unknown, opts: WrapMcpOptions): RebunoTo
 }
 
 function field<T>(descriptor: unknown, key: string): T | undefined {
-  if (descriptor && typeof descriptor === "object") return (descriptor as Record<string, unknown>)[key] as T | undefined;
+  if (descriptor && typeof descriptor === "object")
+    return (descriptor as Record<string, unknown>)[key] as T | undefined;
   return undefined;
 }
 
