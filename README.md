@@ -97,8 +97,7 @@ It sits under the provider SDK: on the first run it forwards the request to the
 provider and records the response as a durable step (`kind=llm_call`, the same
 machinery as tool calls); on resume it replays the recorded response instead of
 calling — and paying for — the model again. The request's `model` field is used
-as the step target; use `createRebunoFetch({ modelField: "..." })` if your
-provider names it differently.
+as the step target.
 
 Recording only happens inside an execution — outside one, `rebunoFetch` is a
 plain passthrough. Two current limits: streaming responses (`stream: true`) are

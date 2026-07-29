@@ -3,7 +3,6 @@ import type { ExecutionContext } from "./execution.js";
 import type { FetchFn } from "./kernel.js";
 
 export interface RebunoFetchOptions {
-  modelField?: string;
   fetch?: FetchFn;
 }
 
@@ -19,7 +18,6 @@ const DELTA_MAX_CHARS = 6000;
 
 /** A `fetch`-compatible function that records LLM calls as durable steps. */
 export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
-  const modelField = opts.modelField ?? "model";
   const inner = opts.fetch ?? fetch;
 
   return (async (
@@ -32,7 +30,7 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
     const payload = jsonBody(init);
     if (!payload) return inner(input, init);
 
-    const target = String(payload[modelField] ?? "");
+    const target = String(payload.model ?? "");
     const { stepId, dec } = await ctx.beginLlm(target, payload);
     if (dec.decision === "replay")
       return responseFromRecord(dec.result as ResponseRecord);
@@ -68,7 +66,7 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
   }) as FetchFn;
 }
 
-/** Default rebunoFetch (model field `"model"`, global fetch). */
+/** Default rebunoFetch, over the global fetch. */
 export const rebunoFetch: FetchFn = createRebunoFetch();
 
 /**
