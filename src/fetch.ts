@@ -14,7 +14,7 @@ interface ResponseRecord {
 
 const DELTA_FLUSH_CHARS = 2000;
 const DELTA_FLUSH_INTERVAL_MS = 50;
-const DELTA_MAX_CHARS = 6000;
+const DELTA_MAX_CHARS = 1750; // the kernel caps a delta at 7000 bytes; UTF-8 runs to 4 bytes a char
 
 /** A `fetch`-compatible function that records LLM calls as durable steps. */
 export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
