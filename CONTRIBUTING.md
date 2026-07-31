@@ -4,7 +4,7 @@ Thanks for your interest in contributing. This guide covers how to set up the pr
 
 ## Prerequisites
 
-- **Node** 18+ (CI runs 22 and 24)
+- **Node** 22+ (CI runs 22 and 24)
 - **pnpm** (the version in `packageManager`)
 
 ## Getting Started
