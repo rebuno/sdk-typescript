@@ -1,4 +1,12 @@
 import { getExecution } from "./context.js";
+import {
+  Blocked,
+  PolicyError,
+  RateLimited,
+  REFUSAL_TYPE,
+  refusalMessage,
+  Terminated,
+} from "./errors.js";
 import type { ExecutionContext } from "./execution.js";
 import type { FetchFn } from "./kernel.js";
 
@@ -31,7 +39,15 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
     if (!payload) return inner(input, init);
 
     const target = String(payload.model ?? "");
-    const { stepId, dec } = await ctx.beginLlm(target, payload);
+    let stepId: string;
+    let dec: Awaited<ReturnType<ExecutionContext["beginLlm"]>>["dec"];
+    try {
+      ({ stepId, dec } = await ctx.beginLlm(target, payload));
+    } catch (e) {
+      const refusal = refusalResponse(e);
+      if (!refusal) throw e;
+      return refusal;
+    }
     if (dec.decision === "replay")
       return responseFromRecord(dec.result as ResponseRecord);
 
@@ -168,6 +184,29 @@ function teeResponse(
     status: resp.status,
     headers: { "content-type": contentType },
   });
+}
+
+/** A refused decision as an HTTP error carrying the refusal marker, else null. */
+function refusalResponse(e: unknown): Response | null {
+  let status = 403;
+  let decision: string;
+  if (e instanceof Blocked) decision = "blocked";
+  else if (e instanceof PolicyError) decision = "denied";
+  else if (e instanceof Terminated) decision = "execution_terminal";
+  else if (e instanceof RateLimited) {
+    decision = "rate_limited";
+    status = 429;
+  } else return null;
+
+  const reason =
+    e instanceof PolicyError || e instanceof RateLimited
+      ? (e as Error).message
+      : "";
+  const message = refusalMessage(decision, reason);
+  return new Response(
+    JSON.stringify({ error: { type: REFUSAL_TYPE, message } }),
+    { status, headers: { "content-type": "application/json" } },
+  );
 }
 
 function jsonBody(init?: RequestInit): Record<string, unknown> | null {

@@ -68,7 +68,7 @@ export class ExecutionContext {
         throw new RateLimited(dec.reason || "rate_limit_exceeded");
       case "blocked":
       case "execution_blocked":
-        throw new Blocked(dec.approvalId);
+        throw new Blocked();
       case "execution_terminal":
         throw new Terminated("execution is terminal");
       case "proceed":

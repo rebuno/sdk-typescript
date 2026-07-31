@@ -56,10 +56,8 @@ describe("error classes", () => {
     expect(e.stepId).toBe("s");
     expect(e).toBeInstanceOf(RebunoError);
   });
-  it("Blocked carries approvalId", () => {
-    expect(new Blocked("ap1").approvalId).toBe("ap1");
-  });
-  it("RateLimited and Terminated are RebunoErrors", () => {
+  it("Blocked, RateLimited and Terminated are RebunoErrors", () => {
+    expect(new Blocked()).toBeInstanceOf(RebunoError);
     expect(new RateLimited()).toBeInstanceOf(RebunoError);
     expect(new Terminated("done")).toBeInstanceOf(RebunoError);
   });

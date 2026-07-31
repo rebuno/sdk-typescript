@@ -13,6 +13,7 @@ export {
   PolicyError,
   RateLimited,
   RebunoError,
+  raiseForRefusal,
   Terminated,
   ToolError,
   UnauthorizedError,

@@ -63,15 +63,48 @@ export class RateLimited extends RebunoError {
 
 /** Control-flow signal: a step is awaiting human approval. */
 export class Blocked extends RebunoError {
-  approvalId: string | null;
-  constructor(approvalId: string | null = null) {
+  constructor() {
     super("execution blocked awaiting approval");
-    this.approvalId = approvalId;
   }
 }
 
 /** Control-flow signal: the execution is terminal (e.g. cancelled). */
 export class Terminated extends RebunoError {}
+
+export const REFUSAL_TYPE = "rebuno_refusal";
+
+const REFUSAL_RE = new RegExp(`${REFUSAL_TYPE}: (\\w+)`);
+
+/** The marker a refused LLM call carries in its HTTP error body. */
+export function refusalMessage(decision: string, reason = ""): string {
+  let msg = `${REFUSAL_TYPE}: ${decision}`;
+  if (reason) msg += ` reason=${reason}`;
+  return msg;
+}
+
+/**
+ * Re-throw a Rebuno refusal carried in a provider error as its control-flow error.
+ *
+ * A step the kernel refuses (approval pending, policy denial, rate limit) reaches
+ * an LLM call as an HTTP error. Call this on the error the provider threw to get
+ * `Blocked`, `PolicyError`, `RateLimited` or `Terminated` back, so the dispatch
+ * unwinds. Returns silently for any other error.
+ */
+export function raiseForRefusal(err: unknown): void {
+  // err and the errors it was thrown from.
+  for (let e = err, i = 0; e != null && i < 10; i++, e = (e as Error).cause) {
+    const message = String((e as Error).message ?? e);
+    const m = REFUSAL_RE.exec(message);
+    if (!m) continue;
+    const [, decision] = m;
+    if (decision === "blocked" || decision === "execution_blocked")
+      throw new Blocked();
+    if (decision === "execution_terminal") throw new Terminated(message);
+    if (decision === "denied") throw new PolicyError(message);
+    if (decision === "rate_limited") throw new RateLimited(message);
+    return;
+  }
+}
 
 const ERROR_BY_CODE: Record<
   string,

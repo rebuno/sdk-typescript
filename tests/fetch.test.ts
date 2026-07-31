@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { runWithContext } from "../src/context.js";
+import {
+  Blocked,
+  PolicyError,
+  RateLimited,
+  raiseForRefusal,
+} from "../src/errors.js";
 import { ExecutionContext } from "../src/execution.js";
 import { createRebunoFetch } from "../src/fetch.js";
 
@@ -87,6 +93,56 @@ describe("rebunoFetch", () => {
     );
     expect(inner).not.toHaveBeenCalled();
     expect(await resp.json()).toEqual({ replayed: true });
+  });
+
+  it.each([
+    ["denied", 403, PolicyError, "rebuno_refusal: denied reason=nope"],
+    ["blocked", 403, Blocked, "rebuno_refusal: blocked"],
+    [
+      "rate_limited",
+      429,
+      RateLimited,
+      "rebuno_refusal: rate_limited reason=nope",
+    ],
+  ])(
+    "refuses %s over HTTP for the caller to map back",
+    async (decision, status, expected, message) => {
+      const inner = vi.fn(async () => new Response("", { status: 500 }));
+      const k = fakeKernel({
+        decision,
+        result: null,
+        error: null,
+        approvalId: null,
+        reason: "nope",
+      });
+      const rf = createRebunoFetch({ fetch: inner as any });
+      const resp = await runWithContext(ctx(k), () =>
+        rf("http://llm/v1/chat", {
+          method: "POST",
+          body: JSON.stringify({ model: "gpt-4", messages: [] }),
+        }),
+      );
+
+      expect(inner).not.toHaveBeenCalled();
+      expect(resp.status).toBe(status);
+      const body = await resp.json();
+      expect(body.error).toEqual({ type: "rebuno_refusal", message });
+
+      const err = new Error(`${status} ${JSON.stringify(body)}`);
+      expect(() => raiseForRefusal(err)).toThrow(expected as any);
+    },
+  );
+
+  it("maps a refusal a framework wrapped in its own error", () => {
+    const cause = new Error(
+      `403 {"error":{"message":"rebuno_refusal: blocked"}}`,
+    );
+    try {
+      raiseForRefusal(new Error("node failed", { cause }));
+      expect.unreachable();
+    } catch (e) {
+      expect(e).toBeInstanceOf(Blocked);
+    }
   });
 });
 
