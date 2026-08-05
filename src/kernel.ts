@@ -1,5 +1,10 @@
 import { signBody } from "./crypto.js";
-import { errorFromResponse, NetworkError, NotFoundError } from "./errors.js";
+import {
+  errorFromResponse,
+  NetworkError,
+  NotFoundError,
+  Terminated,
+} from "./errors.js";
 import {
   type Execution,
   parseExecution,
@@ -17,6 +22,7 @@ export interface KernelClientOptions {
   baseUrl: string;
   timeout?: number;
   fetch?: FetchFn;
+  signal?: AbortSignal;
 }
 
 const enc = (s: string) => new TextEncoder().encode(s);
@@ -28,6 +34,7 @@ export class KernelClient {
   private baseUrl: string;
   private timeout: number;
   private fetchImpl: FetchFn;
+  private signal?: AbortSignal;
 
   constructor(opts: KernelClientOptions) {
     this.agentId = opts.agentId;
@@ -35,6 +42,20 @@ export class KernelClient {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, "");
     this.timeout = opts.timeout ?? 35000;
     this.fetchImpl = opts.fetch ?? fetch;
+    this.signal = opts.signal;
+  }
+
+  /** A view of this client scoped to one run: once `signal` aborts, the run no
+   * longer owns its dispatch and every kernel call it makes is refused. */
+  withSignal(signal: AbortSignal): KernelClient {
+    return new KernelClient({
+      agentId: this.agentId,
+      secret: this.secret,
+      baseUrl: this.baseUrl,
+      timeout: this.timeout,
+      fetch: this.fetchImpl,
+      signal,
+    });
   }
 
   private async send(
@@ -43,6 +64,8 @@ export class KernelClient {
     body: Uint8Array,
     extra?: Record<string, string>,
   ): Promise<Response> {
+    if (this.signal?.aborted)
+      throw new Terminated("superseded by a newer dispatch");
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "Rebuno-Agent-Id": this.agentId,

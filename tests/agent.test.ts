@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../src/agent.js";
 import { execution } from "../src/context.js";
 import { signBody } from "../src/crypto.js";
+import { step } from "../src/step.js";
 
 const SECRET = "sec";
 const KERNEL = "http://kernel";
@@ -191,5 +192,82 @@ describe("Agent.fetch", () => {
     await agent.join();
     const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
     expect(fail?.body.error).toMatch(/prompt required/);
+  });
+
+  it("a redelivery supersedes the previous run", async () => {
+    const { f, calls } = kernelFetch({
+      id: "e1",
+      status: "running",
+      input: { prompt: "hi" },
+    });
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f,
+    });
+    let runs = 0;
+    let started!: () => void;
+    let release!: () => void;
+    const firstStarted = new Promise<void>((r) => {
+      started = r;
+    });
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    agent.bind(async () => {
+      runs++;
+      const mine = runs;
+      if (mine === 1) {
+        started();
+        await gate;
+        await step("late", async () => "from the superseded run");
+      }
+      return { run: mine };
+    });
+
+    await agent.fetch(await webhookRequest(SECRET, "e1", "d1"));
+    await firstStarted;
+    await agent.fetch(await webhookRequest(SECRET, "e1", "d2"));
+    expect((agent as any).tasks.size).toBe(1);
+    await agent.join();
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+
+    const completes = calls.filter((c) =>
+      c.url.endsWith("/v0/executions/e1/complete"),
+    );
+    expect(completes.map((c) => c.body)).toEqual([{ output: { run: 2 } }]);
+    // The superseded run must not have written at all — neither the execution
+    // nor a step it was still mid-flight on: the new run owns both.
+    expect(calls.some((c) => c.url.endsWith("/v0/executions/e1/fail"))).toBe(
+      false,
+    );
+    expect(calls.some((c) => c.url.includes("/steps"))).toBe(false);
+  });
+
+  it("runs distinct executions concurrently", async () => {
+    const completed: string[] = [];
+    const f = vi.fn(async (url: string, init: any) => {
+      const id = url.match(/\/v0\/executions\/([^/]+)/)![1];
+      if (init.method === "GET")
+        return new Response(
+          JSON.stringify({ id, status: "running", input: {} }),
+          { status: 200 },
+        );
+      if (url.endsWith(`/v0/executions/${id}/complete`)) completed.push(id);
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f as any,
+    });
+    agent.bind(async () => ({ ok: true }));
+    for (const id of ["e1", "e2"]) {
+      const resp = await agent.fetch(await webhookRequest(SECRET, id));
+      expect(resp.status).toBe(200);
+    }
+    await agent.join();
+    expect(completed.sort()).toEqual(["e1", "e2"]);
   });
 });

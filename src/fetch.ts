@@ -58,17 +58,14 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
       return teeResponse(ctx, stepId, resp);
     }
 
-    // Whole response (including error statuses): read under a lease, record it,
-    // and hand back a reconstructed response.
-    const stopHb = ctx.startHeartbeat();
+    // Whole response (including error statuses): read it, record it, and hand
+    // back a reconstructed response.
     let body: string;
     try {
       body = await resp.text();
     } catch (e) {
       await ctx.failStepQuietly(stepId, e);
       throw e;
-    } finally {
-      stopHb();
     }
     const record: ResponseRecord = {
       status: resp.status,
@@ -104,7 +101,6 @@ function teeResponse(
   let seq = 0;
   let done = false;
   let lastFlush = Date.now();
-  const stopHb = ctx.startHeartbeat(); // renew the lease while streaming
 
   const flush = async () => {
     for (let i = 0; i < pending.length; i += DELTA_MAX_CHARS) {
@@ -122,25 +118,21 @@ function teeResponse(
   const finish = async (error?: unknown) => {
     if (done) return;
     done = true;
-    try {
-      if (error !== undefined) {
-        await ctx.failStepQuietly(stepId, error);
-        return;
-      }
-      const tail = decoder.decode();
-      if (tail) {
-        chunks.push(tail);
-        pending += tail;
-      }
-      if (pending) await flush();
-      await ctx.recordLlm(stepId, {
-        status: resp.status,
-        headers: { "content-type": contentType },
-        body: chunks.join(""),
-      });
-    } finally {
-      stopHb();
+    if (error !== undefined) {
+      await ctx.failStepQuietly(stepId, error);
+      return;
     }
+    const tail = decoder.decode();
+    if (tail) {
+      chunks.push(tail);
+      pending += tail;
+    }
+    if (pending) await flush();
+    await ctx.recordLlm(stepId, {
+      status: resp.status,
+      headers: { "content-type": contentType },
+      body: chunks.join(""),
+    });
   };
 
   const stream = new ReadableStream<Uint8Array>({

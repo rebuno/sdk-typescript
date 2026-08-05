@@ -50,7 +50,10 @@ export class Agent<TInput = any, TOutput = unknown> {
   private inputSchema?: StandardSchema;
   private kernel: KernelClient;
   private process?: ProcessFn<TInput, TOutput>;
-  private tasks = new Set<Promise<void>>();
+  private tasks = new Map<
+    string,
+    { promise: Promise<void>; ctrl: AbortController }
+  >();
 
   constructor(agentId: string, opts: AgentOptions = {}) {
     if (!agentId) throw new Error("agentId must not be empty");
@@ -96,18 +99,27 @@ export class Agent<TInput = any, TOutput = unknown> {
     const executionId = payload?.execution_id as string | undefined;
     const dispatchId = payload?.dispatch_id as string | undefined;
     if (!executionId || !dispatchId) return new Response(null, { status: 400 });
-    const task = this.safeHandle(executionId, dispatchId);
-    this.tasks.add(task);
-    void task.finally(() => this.tasks.delete(task));
+
+    this.tasks.get(executionId)?.ctrl.abort();
+    const ctrl = new AbortController();
+    const entry = {
+      promise: this.safeHandle(executionId, dispatchId, ctrl.signal),
+      ctrl,
+    };
+    this.tasks.set(executionId, entry);
+    void entry.promise.finally(() => {
+      if (this.tasks.get(executionId) === entry) this.tasks.delete(executionId);
+    });
     return new Response(null, { status: 200 });
   };
 
   private async safeHandle(
     executionId: string,
     dispatchId: string,
+    signal: AbortSignal,
   ): Promise<void> {
     try {
-      await this.handle(executionId, dispatchId);
+      await this.handle(executionId, dispatchId, signal);
     } catch (e) {
       if (e instanceof Blocked || e instanceof Terminated) return;
       console.error(
@@ -117,9 +129,16 @@ export class Agent<TInput = any, TOutput = unknown> {
     }
   }
 
-  private async handle(executionId: string, dispatchId: string): Promise<void> {
+  private async handle(
+    executionId: string,
+    dispatchId: string,
+    signal: AbortSignal,
+  ): Promise<void> {
     if (!this.process) throw new Error("Agent.bind(process) was not called");
-    const exec = await this.kernel.getExecution(executionId);
+    // Scoped to this run: once superseded, its kernel calls are refused, so it
+    // can neither renew the lease nor write for a dispatch it no longer owns.
+    const kernel = this.kernel.withSignal(signal);
+    const exec = await kernel.getExecution(executionId);
     if (
       exec.status === "completed" ||
       exec.status === "failed" ||
@@ -128,12 +147,13 @@ export class Agent<TInput = any, TOutput = unknown> {
       return;
 
     const ctx = new ExecutionContext({
-      kernel: this.kernel,
+      kernel,
       executionId,
       dispatchId,
       agentId: this.agentId,
       input: exec.input,
       status: exec.status,
+      signal,
     });
 
     await runWithContext(ctx, async () => {
@@ -142,7 +162,7 @@ export class Agent<TInput = any, TOutput = unknown> {
         const res = await this.inputSchema["~standard"].validate(input);
         if ("issues" in res && res.issues) {
           const msg = res.issues.map((i) => i.message).join("; ");
-          await this.kernel.failExecution(
+          await kernel.failExecution(
             executionId,
             `input validation failed: ${msg}`,
           );
@@ -151,6 +171,7 @@ export class Agent<TInput = any, TOutput = unknown> {
         input = (res as { value: unknown }).value;
       }
       let output: unknown;
+      const stopLease = ctx.startHeartbeat();
       try {
         output = await this.process!(input as TInput);
       } catch (e) {
@@ -160,26 +181,28 @@ export class Agent<TInput = any, TOutput = unknown> {
           e instanceof ToolError ||
           e instanceof RateLimited
         ) {
-          await this.kernel.failExecution(
+          await kernel.failExecution(
             executionId,
             String(e instanceof Error ? e.message : e),
           );
           return;
         }
         console.error(`rebuno: process error execution_id=${executionId}`, e);
-        await this.kernel.failExecution(
+        await kernel.failExecution(
           executionId,
           String(e instanceof Error ? e.message : e),
         );
         return;
+      } finally {
+        stopLease();
       }
-      await this.kernel.completeExecution(executionId, output);
+      await kernel.completeExecution(executionId, output);
     });
   }
 
   /** Wait for all in-flight execution handlers to finish (best-effort). */
   async join(): Promise<void> {
-    await Promise.allSettled([...this.tasks]);
+    await Promise.allSettled([...this.tasks.values()].map((t) => t.promise));
   }
 
   async close(): Promise<void> {

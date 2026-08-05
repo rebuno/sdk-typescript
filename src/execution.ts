@@ -18,6 +18,7 @@ export interface ExecutionContextOptions {
   agentId: string;
   input: unknown;
   status?: string;
+  signal?: AbortSignal;
 }
 
 /** One per dispatch. Submits effects to the kernel and applies its decisions. */
@@ -26,6 +27,8 @@ export class ExecutionContext {
   readonly dispatchId: string;
   readonly agentId: string;
   readonly input: unknown;
+  /** Aborted once a newer dispatch for this execution supersedes this run. */
+  readonly signal: AbortSignal;
   status: string;
   private kernel: KernelClient;
 
@@ -35,6 +38,7 @@ export class ExecutionContext {
     this.dispatchId = o.dispatchId;
     this.agentId = o.agentId;
     this.input = o.input;
+    this.signal = o.signal ?? new AbortController().signal;
     this.status = o.status ?? "running";
   }
 
@@ -78,25 +82,24 @@ export class ExecutionContext {
     }
   }
 
-  /** Start renewing the dispatch lease in the background; returns a stop function
-   * the caller must invoke when the effect finishes. */
+  /**
+   * Renew the dispatch lease until the returned stop function is called, so the
+   * kernel doesn't reclaim the dispatch and re-deliver it to a second handler.
+   *
+   * The renewed body must yield to the event loop for the heartbeat to fire — a
+   * fully blocking body starves it. Everything long in a handler (LLM/provider
+   * calls, MCP tools, kernel round-trips) is I/O-bound and async, so this holds.
+   * A superseded run stops renewing: the lease belongs to the newer dispatch.
+   */
   startHeartbeat(intervalMs = 30000): () => void {
     const hb = setInterval(() => {
+      if (this.signal.aborted) {
+        clearInterval(hb);
+        return;
+      }
       void this.kernel.heartbeat(this.id).catch(() => {});
     }, intervalMs);
     return () => clearInterval(hb);
-  }
-
-  private async runWithHeartbeat<T>(
-    run: () => Promise<T>,
-    intervalMs = 30000,
-  ): Promise<T> {
-    const stop = this.startHeartbeat(intervalMs);
-    try {
-      return await run();
-    } finally {
-      stop();
-    }
   }
 
   async invokeTool(
@@ -129,7 +132,7 @@ export class ExecutionContext {
     }
     let result: unknown;
     try {
-      result = await this.runWithHeartbeat(opts.run);
+      result = await opts.run();
     } catch (e) {
       if (
         e instanceof Blocked ||
