@@ -2,6 +2,7 @@ import { runWithContext } from "./context.js";
 import {
   Blocked,
   PolicyError,
+  raiseForRefusal,
   RateLimited,
   Terminated,
   ToolError,
@@ -174,8 +175,19 @@ export class Agent<TInput = any, TOutput = unknown> {
       const stopLease = ctx.startHeartbeat();
       try {
         output = await this.process!(input as TInput);
+        if (ctx.suspension) throw ctx.suspension;
       } catch (e) {
         if (e instanceof Blocked || e instanceof Terminated) throw e;
+        if (ctx.suspension) throw ctx.suspension;
+        // Blocked and Terminated propagate; a denial or rate limit is rebound
+        // onto e and fails the execution below.
+        try {
+          raiseForRefusal(e);
+        } catch (refused) {
+          if (refused instanceof Blocked || refused instanceof Terminated)
+            throw refused;
+          e = refused;
+        }
         if (
           e instanceof PolicyError ||
           e instanceof ToolError ||

@@ -30,6 +30,8 @@ export class ExecutionContext {
   /** Aborted once a newer dispatch for this execution supersedes this run. */
   readonly signal: AbortSignal;
   status: string;
+  /** The Blocked or Terminated this context threw, if any. */
+  suspension: Blocked | Terminated | null = null;
   private kernel: KernelClient;
 
   constructor(o: ExecutionContextOptions) {
@@ -72,9 +74,11 @@ export class ExecutionContext {
         throw new RateLimited(dec.reason || "rate_limit_exceeded");
       case "blocked":
       case "execution_blocked":
-        throw new Blocked();
+        this.suspension = new Blocked();
+        throw this.suspension;
       case "execution_terminal":
-        throw new Terminated("execution is terminal");
+        this.suspension = new Terminated("execution is terminal");
+        throw this.suspension;
       case "proceed":
         return;
       default:
