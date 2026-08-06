@@ -3,6 +3,7 @@ import { Agent } from "../src/agent.js";
 import { execution } from "../src/context.js";
 import { signBody } from "../src/crypto.js";
 import { step } from "../src/step.js";
+import { defineTool } from "../src/tool.js";
 
 const SECRET = "sec";
 const KERNEL = "http://kernel";
@@ -269,5 +270,142 @@ describe("Agent.fetch", () => {
     }
     await agent.join();
     expect(completed.sort()).toEqual(["e1", "e2"]);
+  });
+});
+
+describe("Agent suspension handling", () => {
+  // Holds every step for approval, the way a require_approval policy does.
+  function blockingKernelFetch(id: string) {
+    const calls: { url: string }[] = [];
+    const f = vi.fn(async (url: string, init: any) => {
+      calls.push({ url });
+      if (init?.method === "GET")
+        return new Response(
+          JSON.stringify({ id, status: "running", input: {} }),
+          { status: 200 },
+        );
+      if (url.endsWith("/steps") && init?.method === "POST")
+        return new Response(
+          JSON.stringify({
+            decision: "blocked",
+            step_id: "s1",
+            approval_id: "ap1",
+          }),
+          { status: 200 },
+        );
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    const settled = () => ({
+      completed: calls.some((c) =>
+        c.url.endsWith(`/v0/executions/${id}/complete`),
+      ),
+      failed: calls.some((c) => c.url.endsWith(`/v0/executions/${id}/fail`)),
+    });
+    return { f, settled };
+  }
+
+  const sendEmail = defineTool({
+    name: "send_email",
+    idempotency: "at_most_once",
+    execute: async () => ({ sent: true }),
+  });
+
+  // Frameworks catch what a tool throws and hand it to the model, so the handler
+  // can return an answer for work the kernel never allowed to run.
+  it("does not complete when the handler swallows a blocked tool", async () => {
+    const { f, settled } = blockingKernelFetch("e1");
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f as any,
+    });
+    agent.bind(async () => {
+      try {
+        await sendEmail.execute({});
+      } catch {
+        // swallowed, as a framework would
+      }
+      return { answer: "emailed" };
+    });
+    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
+      200,
+    );
+    await agent.join();
+    expect(settled()).toEqual({ completed: false, failed: false });
+  });
+
+  // After swallowing the block a framework calls the model again, and that refusal
+  // surfaces as the provider's own error rather than Blocked.
+  it("does not fail when a later error follows a swallowed block", async () => {
+    const { f, settled } = blockingKernelFetch("e1");
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f as any,
+    });
+    agent.bind(async () => {
+      try {
+        await sendEmail.execute({});
+      } catch {
+        // swallowed, as a framework would
+      }
+      throw new Error("Error code: 403 - provider rejected the call");
+    });
+    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
+      200,
+    );
+    await agent.join();
+    expect(settled()).toEqual({ completed: false, failed: false });
+  });
+
+  // A step a gateway refused is never thrown in this process; the decision only
+  // exists inside the provider's error.
+  it("parks on a gateway refusal carrying the marker", async () => {
+    const { f, calls } = kernelFetch({
+      id: "e1",
+      status: "running",
+      input: {},
+    });
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f as any,
+    });
+    agent.bind(async () => {
+      throw new Error("Error code: 403 - rebuno_refusal: execution_blocked");
+    });
+    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
+      200,
+    );
+    await agent.join();
+    expect(
+      calls.some((c) => c.url.endsWith("/v0/executions/e1/complete")),
+    ).toBe(false);
+    expect(calls.some((c) => c.url.endsWith("/v0/executions/e1/fail"))).toBe(
+      false,
+    );
+  });
+
+  it("still fails on a gateway denial", async () => {
+    const { f, calls } = kernelFetch({
+      id: "e1",
+      status: "running",
+      input: {},
+    });
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f as any,
+    });
+    agent.bind(async () => {
+      throw new Error("Error code: 403 - rebuno_refusal: denied");
+    });
+    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
+      200,
+    );
+    await agent.join();
+    expect(calls.some((c) => c.url.endsWith("/v0/executions/e1/fail"))).toBe(
+      true,
+    );
   });
 });
