@@ -1,6 +1,19 @@
 import { getExecution } from "./context.js";
+import { PolicyError } from "./errors.js";
 
 export type Idempotency = "safe_to_retry" | "at_most_once";
+
+async function routeTool<TResult>(
+  name: string,
+  call: () => Promise<TResult>,
+): Promise<TResult> {
+  try {
+    return await call();
+  } catch (err) {
+    if (!(err instanceof PolicyError)) throw err;
+    return `${name} not allowed. reason: ${err.message}` as TResult;
+  }
+}
 
 export interface RebunoTool<
   TArgs = Record<string, unknown>,
@@ -35,10 +48,12 @@ export function defineTool<
           `Tools run inside a handler under agent.serve()/agent.fetch (or a test context).`,
       );
     }
-    return (await ctx.invokeTool(opts.name, args, {
-      idempotency,
-      run: async () => opts.execute(args),
-    })) as TResult;
+    return routeTool(opts.name, async () =>
+      (await ctx.invokeTool(opts.name, args, {
+        idempotency,
+        run: async () => opts.execute(args),
+      })) as TResult,
+    );
   };
   return {
     name: opts.name,
@@ -78,10 +93,14 @@ export function wrapTool<TResult = unknown>(
       const result = await opts.invoke(args);
       return opts.toResult ? opts.toResult(result) : result;
     };
-    return (await ctx.invokeTool(opts.name, args, {
-      idempotency,
-      run,
-    })) as TResult;
+    return routeTool(
+      opts.name,
+      async () =>
+        (await ctx.invokeTool(opts.name, args, {
+          idempotency,
+          run,
+        })) as TResult,
+    );
   };
   return {
     name: opts.name,
