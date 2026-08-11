@@ -48,11 +48,13 @@ export function defineTool<
           `Tools run inside a handler under agent.serve()/agent.fetch (or a test context).`,
       );
     }
-    return routeTool(opts.name, async () =>
-      (await ctx.invokeTool(opts.name, args, {
-        idempotency,
-        run: async () => opts.execute(args),
-      })) as TResult,
+    return routeTool(
+      opts.name,
+      async () =>
+        (await ctx.invokeTool(opts.name, args, {
+          idempotency,
+          run: async () => opts.execute(args),
+        })) as TResult,
     );
   };
   return {
