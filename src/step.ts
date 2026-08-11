@@ -1,7 +1,11 @@
 import { getExecution } from "./context.js";
 import type { Idempotency } from "./tool.js";
 
-/** Record non-deterministic local work as a durable step, replayed identically on resume. */
+/**
+ * Record non-deterministic local work as a durable step, replayed identically on resume.
+ *
+ * Recorded as a step of kind `local`
+ */
 export async function step<T = unknown>(
   name: string,
   fn: (args: Record<string, unknown>) => T | Promise<T>,
@@ -15,6 +19,7 @@ export async function step<T = unknown>(
     );
   return (await ctx.invokeTool(name, args, {
     idempotency,
+    kind: "local",
     run: async () => fn(args),
   })) as T;
 }

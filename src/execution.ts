@@ -10,6 +10,7 @@ import type { KernelClient } from "./kernel.js";
 import type { StepDecision } from "./types.js";
 
 type Idempotency = "safe_to_retry" | "at_most_once";
+type StepKind = "tool_call" | "llm_call" | "local";
 
 export interface ExecutionContextOptions {
   kernel: KernelClient;
@@ -109,10 +110,14 @@ export class ExecutionContext {
   async invokeTool(
     target: string,
     args: Record<string, unknown>,
-    opts: { idempotency?: Idempotency; run?: () => Promise<unknown> } = {},
+    opts: {
+      idempotency?: Idempotency;
+      run?: () => Promise<unknown>;
+      kind?: StepKind;
+    } = {},
   ): Promise<unknown> {
     const idempotency = opts.idempotency ?? "safe_to_retry";
-    const kind = "tool_call";
+    const kind = opts.kind ?? "tool_call";
     const { stepId, dec } = await this.submit({
       kind,
       target,

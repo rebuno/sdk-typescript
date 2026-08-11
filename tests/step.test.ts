@@ -36,6 +36,7 @@ describe("step", () => {
     expect(out).toBe(5);
     expect(fn).toHaveBeenCalledWith({ a: 2, b: 3 });
     expect(k.submitStep.mock.calls[0][1].target).toBe("sum");
+    expect(k.submitStep.mock.calls[0][1].kind).toBe("local");
   });
   it("throws outside a context", async () => {
     await expect(step("x", () => 1)).rejects.toThrow(
