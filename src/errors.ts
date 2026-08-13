@@ -46,7 +46,7 @@ export class ToolError extends RebunoError {
     message: string,
     opts: { toolId?: string; stepId?: string; retryable?: boolean } = {},
   ) {
-    super(message);
+    super(opts.toolId ? `${opts.toolId}: ${message}` : message);
     this.toolId = opts.toolId ?? "";
     this.stepId = opts.stepId ?? "";
     this.retryable = opts.retryable ?? false;
