@@ -25,13 +25,11 @@ import { Agent, defineTool } from "rebuno";
 
 const search = defineTool({
   name: "search",
-  description: "Search the web",
-  inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
   execute: async ({ query }) => [`result for ${query}`],
 });
 
 async function process(input: { prompt: string }) {
-  const hits = await search.execute({ query: input.prompt });
+  const hits = await search({ query: input.prompt });
   return { answer: hits };
 }
 
@@ -63,15 +61,28 @@ export const POST = agent.fetch;
 ```ts
 const search = defineTool({
   name: "search",
-  description: "Search the web",
-  inputSchema: { type: "object", properties: { query: { type: "string" } }, required: ["query"] },
-  execute: async ({ query }) => [`result for ${query}`],
+  execute: async ({ query }: { query: string }) => [`result for ${query}`],
 });
 ```
 
-`defineTool` returns a plain object your framework can consume directly (e.g.
-the Vercel AI SDK), with a durable `execute`. Call `search.execute({ query })`
-yourself, or hand the tool to your agent framework as part of its tool set.
+`defineTool` returns an async function that routes through the kernel. Call
+`search({ query })` yourself, or give it to your agent framework as the function
+its tool calls:
+
+```ts
+import { tool } from "ai";
+import { z } from "zod";
+
+const searchTool = tool({
+  description: "Search the web",
+  inputSchema: z.object({ query: z.string() }),
+  execute: search,
+});
+```
+
+The framework owns the description and schema it shows the model; `search.name`
+is the tool id the kernel records, so use it as the framework's id to keep policy
+rules in sync.
 
 Use `idempotency: "at_most_once"` for destructive operations that must not be
 retried automatically (e.g. sending an email or charging a card).
@@ -99,10 +110,13 @@ machinery as tool calls); on resume it replays the recorded response instead of
 calling — and paying for — the model again. The request's `model` field is used
 as the step target.
 
+Streaming works the same way: `rebunoFetch` tees the provider's event stream to
+your code while assembling it, records the assembled whole, and replays it as a
+stream so `stream: true` still yields a stream on resume.
+
 Recording only happens inside an execution — outside one, `rebunoFetch` is a
-plain passthrough. Two current limits: streaming responses (`stream: true`) are
-passed through un-recorded (you'll get a warning), and non-JSON request bodies
-aren't recognized as LLM calls.
+plain passthrough. One current limit: non-JSON request bodies aren't recognized
+as LLM calls.
 
 ## Durable local work
 

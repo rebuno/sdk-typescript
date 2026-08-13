@@ -19,11 +19,34 @@ export interface RebunoTool<
   TArgs = Record<string, unknown>,
   TResult = unknown,
 > {
+  (args: TArgs): Promise<TResult>;
   name: string;
   description: string;
   inputSchema: unknown;
   idempotency: Idempotency;
   execute: (args: TArgs) => Promise<TResult>;
+}
+
+function asTool<TArgs, TResult>(
+  execute: (args: TArgs) => Promise<TResult>,
+  meta: {
+    name: string;
+    description: string;
+    inputSchema: unknown;
+    idempotency: Idempotency;
+  },
+): RebunoTool<TArgs, TResult> {
+  Object.defineProperty(execute, "name", {
+    value: meta.name,
+    configurable: true,
+    enumerable: true,
+  });
+  return Object.assign(execute, {
+    description: meta.description,
+    inputSchema: meta.inputSchema,
+    idempotency: meta.idempotency,
+    execute,
+  }) as RebunoTool<TArgs, TResult>;
 }
 
 export interface DefineToolOptions<TArgs, TResult> {
@@ -34,7 +57,7 @@ export interface DefineToolOptions<TArgs, TResult> {
   execute: (args: TArgs) => TResult | Promise<TResult>;
 }
 
-/** Register a durable tool. The returned `execute` routes through the kernel. */
+/** Register a durable tool. The returned function routes through the kernel. */
 export function defineTool<
   TArgs extends Record<string, unknown> = Record<string, unknown>,
   TResult = unknown,
@@ -57,13 +80,12 @@ export function defineTool<
         })) as TResult,
     );
   };
-  return {
+  return asTool(execute, {
     name: opts.name,
     description: opts.description ?? "",
     inputSchema: opts.inputSchema ?? null,
     idempotency,
-    execute,
-  };
+  });
 }
 
 export interface WrapToolOptions<TResult> {
@@ -104,11 +126,10 @@ export function wrapTool<TResult = unknown>(
         })) as TResult,
     );
   };
-  return {
+  return asTool(execute, {
     name: opts.name,
     description: opts.description ?? "",
     inputSchema: opts.inputSchema ?? null,
     idempotency,
-    execute,
-  };
+  });
 }

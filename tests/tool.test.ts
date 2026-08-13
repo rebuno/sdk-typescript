@@ -27,7 +27,7 @@ const ctx = (k: any) =>
   });
 
 describe("defineTool", () => {
-  it("returns a plain object with name/description/inputSchema and a durable execute", async () => {
+  it("returns a callable carrying name/description/inputSchema and a durable execute", async () => {
     const schema = { type: "object" };
     const t = defineTool({
       name: "search",
@@ -44,6 +44,23 @@ describe("defineTool", () => {
     expect(out).toEqual(["hi"]);
     expect(k.submitStep).toHaveBeenCalledOnce();
     expect(k.submitStep.mock.calls[0][1].target).toBe("search");
+  });
+
+  it("routes through the kernel when the tool itself is called", async () => {
+    const t = defineTool({
+      name: "search",
+      execute: async ({ q }: { q: string }) => [q],
+    });
+    const k = fakeKernel();
+    const out = await runWithContext(ctx(k), () => t({ q: "hi" }));
+    expect(out).toEqual(["hi"]);
+    expect(k.submitStep.mock.calls[0][1].target).toBe("search");
+  });
+
+  it("keeps name enumerable so spreading the tool preserves it", () => {
+    const t = defineTool({ name: "search", execute: async () => 1 });
+    expect(t.name).toBe("search");
+    expect({ ...t }.name).toBe("search");
   });
 
   it("execute throws when called outside an execution", async () => {
