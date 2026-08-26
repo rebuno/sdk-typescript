@@ -8,6 +8,7 @@ export {
   Blocked,
   ConflictError,
   ForbiddenError,
+  failureReason,
   NetworkError,
   NotFoundError,
   PolicyError,

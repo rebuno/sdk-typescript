@@ -70,7 +70,7 @@ export class ExecutionContext {
   private raiseForDecision(dec: StepDecision): void {
     switch (dec.decision) {
       case "denied":
-        throw new PolicyError(dec.reason || "denied by policy");
+        throw new PolicyError(dec.reason || "policy_denied");
       case "rate_limited":
         throw new RateLimited(dec.reason || "rate_limit_exceeded");
       case "blocked":

@@ -1,6 +1,7 @@
 import { runWithContext } from "./context.js";
 import {
   Blocked,
+  failureReason,
   PolicyError,
   RateLimited,
   raiseForRefusal,
@@ -163,10 +164,7 @@ export class Agent<TInput = any, TOutput = unknown> {
         const res = await this.inputSchema["~standard"].validate(input);
         if ("issues" in res && res.issues) {
           const msg = res.issues.map((i) => i.message).join("; ");
-          await kernel.failExecution(
-            executionId,
-            `input validation failed: ${msg}`,
-          );
+          await kernel.failExecution(executionId, `input_invalid: ${msg}`);
           return;
         }
         input = (res as { value: unknown }).value;
@@ -189,21 +187,14 @@ export class Agent<TInput = any, TOutput = unknown> {
           e = refused;
         }
         if (
-          e instanceof PolicyError ||
-          e instanceof ToolError ||
-          e instanceof RateLimited
-        ) {
-          await kernel.failExecution(
-            executionId,
-            String(e instanceof Error ? e.message : e),
-          );
-          return;
-        }
-        console.error(`rebuno: process error execution_id=${executionId}`, e);
-        await kernel.failExecution(
-          executionId,
-          String(e instanceof Error ? e.message : e),
-        );
+          !(
+            e instanceof PolicyError ||
+            e instanceof ToolError ||
+            e instanceof RateLimited
+          )
+        )
+          console.error(`rebuno: process error execution_id=${executionId}`, e);
+        await kernel.failExecution(executionId, failureReason(e));
         return;
       } finally {
         stopLease();

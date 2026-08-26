@@ -3,6 +3,7 @@ import { Agent } from "../src/agent.js";
 import { execution } from "../src/context.js";
 import { signBody } from "../src/crypto.js";
 import { ToolError } from "../src/errors.js";
+import { createRebunoFetch } from "../src/fetch.js";
 import { step } from "../src/step.js";
 import { defineTool } from "../src/tool.js";
 
@@ -10,7 +11,7 @@ const SECRET = "sec";
 const KERNEL = "http://kernel";
 
 // Build a fetch that emulates the kernel for a given execution.
-function kernelFetch(exec: any, steps: any[] = []) {
+function kernelFetch(exec: any, steps: any[] = [], decision: any = null) {
   const calls: { url: string; body: any }[] = [];
   const f = vi.fn(async (url: string, init: any) => {
     const bodyText = init?.body ? new TextDecoder().decode(init.body) : "";
@@ -22,7 +23,7 @@ function kernelFetch(exec: any, steps: any[] = []) {
       return new Response(JSON.stringify(steps), { status: 200 });
     }
     if (url.endsWith("/steps") && init.method === "POST") {
-      return new Response(JSON.stringify({ decision: "proceed" }), {
+      return new Response(JSON.stringify(decision ?? { decision: "proceed" }), {
         status: 200,
       });
     }
@@ -193,7 +194,7 @@ describe("Agent.fetch", () => {
     await agent.fetch(await webhookRequest(SECRET, "e1"));
     await agent.join();
     const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
-    expect(fail?.body.error).toMatch(/prompt required/);
+    expect(fail?.body.error).toBe("input_invalid: prompt required");
   });
 
   it("names the tool in the recorded failure reason", async () => {
@@ -213,7 +214,55 @@ describe("Agent.fetch", () => {
     await agent.fetch(await webhookRequest(SECRET, "e1"));
     await agent.join();
     const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
-    expect(fail?.body.error).toBe("send_email: indeterminate");
+    expect(fail?.body.error).toBe("tool_error: send_email: indeterminate");
+  });
+
+  it("prefixes an uncaught error with agent_error", async () => {
+    const { f, calls } = kernelFetch({
+      id: "e1",
+      status: "running",
+      input: {},
+    });
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f,
+    });
+    agent.bind(async () => {
+      throw new TypeError("boom");
+    });
+    await agent.fetch(await webhookRequest(SECRET, "e1"));
+    await agent.join();
+    const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
+    expect(fail?.body.error).toBe("agent_error: TypeError: boom");
+  });
+
+  it("records the kernel reason for a denied llm call", async () => {
+    const REASON = "fs_write not allowed outside /tmp";
+    const { f, calls } = kernelFetch(
+      { id: "e1", status: "running", input: {} },
+      [],
+      { decision: "denied", reason: REASON },
+    );
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f,
+    });
+    agent.bind(async () => {
+      const llm = createRebunoFetch({
+        fetch: async () => new Response("{}", { status: 200 }),
+      });
+      const r = await llm("http://llm/v1/chat", {
+        method: "POST",
+        body: JSON.stringify({ model: "m" }),
+      });
+      throw new Error(`Error code: 403 - ${await r.text()}`);
+    });
+    await agent.fetch(await webhookRequest(SECRET, "e1"));
+    await agent.join();
+    const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
+    expect(fail?.body.error).toBe(`policy_denied: ${REASON}`);
   });
 
   it("a redelivery supersedes the previous run", async () => {

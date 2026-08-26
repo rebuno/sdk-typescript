@@ -8,6 +8,8 @@ import {
   PolicyError,
   RateLimited,
   RebunoError,
+  raiseForRefusal,
+  refusalMessage,
   Terminated,
   ToolError,
   UnauthorizedError,
@@ -61,4 +63,22 @@ describe("error classes", () => {
     expect(new RateLimited()).toBeInstanceOf(RebunoError);
     expect(new Terminated("done")).toBeInstanceOf(RebunoError);
   });
+});
+
+it("stops the reason at the marker line", () => {
+  const body = JSON.stringify({
+    error: {
+      type: "rebuno_refusal",
+      message: refusalMessage("denied", "budget_gone"),
+    },
+  });
+  const provider = new Error(
+    `Error code: 403 - ${body}\n\nRequest ID: req_abc123`,
+  );
+  expect(() => raiseForRefusal(provider)).toThrow(PolicyError);
+  try {
+    raiseForRefusal(provider);
+  } catch (e) {
+    expect((e as Error).message).toBe("budget_gone");
+  }
 });

@@ -73,7 +73,12 @@ export class Terminated extends RebunoError {}
 
 export const REFUSAL_TYPE = "rebuno_refusal";
 
-const REFUSAL_RE = new RegExp(`${REFUSAL_TYPE}: (\\w+)`);
+const REFUSAL_RE = new RegExp(`${REFUSAL_TYPE}: (\\w+)(?: reason=(.*))?`);
+const TOKEN_RE = /^[a-z0-9_]+$/;
+const DEFAULT_REASON: Record<string, string> = {
+  denied: "policy_denied",
+  rate_limited: "rate_limit_exceeded",
+};
 
 /** The marker a refused LLM call carries in its HTTP error body. */
 export function refusalMessage(decision: string, reason = ""): string {
@@ -96,12 +101,16 @@ export function raiseForRefusal(err: unknown): void {
     const message = String((e as Error).message ?? e);
     const m = REFUSAL_RE.exec(message);
     if (!m) continue;
-    const [, decision] = m;
+    const [, decision, captured] = m;
+    const reason =
+      (captured ?? "").replace(/["'} \n]+$/, "") ||
+      DEFAULT_REASON[decision] ||
+      decision;
     if (decision === "blocked" || decision === "execution_blocked")
       throw new Blocked();
-    if (decision === "execution_terminal") throw new Terminated(message);
-    if (decision === "denied") throw new PolicyError(message);
-    if (decision === "rate_limited") throw new RateLimited(message);
+    if (decision === "execution_terminal") throw new Terminated(reason);
+    if (decision === "denied") throw new PolicyError(reason);
+    if (decision === "rate_limited") throw new RateLimited(reason);
     return;
   }
 }
@@ -130,4 +139,25 @@ export function errorFromResponse(
   if (code === "policy_denied") return new PolicyError(message, ruleId);
   const Cls = ERROR_BY_CODE[code] ?? APIError;
   return new Cls(message, code, statusCode);
+}
+
+/**
+ * The text an execution's `failure_reason` records for `err`.
+ *
+ * Everything before the first colon is a stable token: a kernel reason
+ * (`policy_denied`, `execution_token_budget_exceeded`, `approval_timeout`,
+ * `indeterminate`, `rate_limit_exceeded`, `rate_limiter_unavailable`) or one of
+ * `tool_error`, `agent_error`, `input_invalid`. A rule's own prose reason is not
+ * a token, so it follows `policy_denied:`.
+ */
+export function failureReason(err: unknown): string {
+  if (err instanceof PolicyError)
+    return TOKEN_RE.test(err.message)
+      ? err.message
+      : `policy_denied: ${err.message}`;
+  if (err instanceof RateLimited) return err.message;
+  if (err instanceof ToolError) return `tool_error: ${err.message}`;
+  const name = err instanceof Error ? err.constructor.name : typeof err;
+  const detail = err instanceof Error ? err.message : String(err);
+  return `agent_error: ${name}: ${detail}`;
 }
