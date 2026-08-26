@@ -61,10 +61,10 @@ export class RateLimited extends RebunoError {
   }
 }
 
-/** Control-flow signal: a step is awaiting human approval. */
+/** Control-flow signal: the kernel suspended the step. */
 export class Blocked extends RebunoError {
   constructor() {
-    super("execution blocked awaiting approval");
+    super("step blocked");
   }
 }
 
@@ -146,9 +146,9 @@ export function errorFromResponse(
  *
  * Everything before the first colon is a stable token: a kernel reason
  * (`policy_denied`, `execution_token_budget_exceeded`, `approval_timeout`,
- * `indeterminate`, `rate_limit_exceeded`, `rate_limiter_unavailable`) or one of
- * `tool_error`, `agent_error`, `input_invalid`. A rule's own prose reason is not
- * a token, so it follows `policy_denied:`.
+ * `rate_limit_exceeded`, `rate_limiter_unavailable`) or one of `tool_error`,
+ * `agent_error`, `input_invalid`. A rule's own prose reason is not a token, so
+ * it follows `policy_denied:`.
  */
 export function failureReason(err: unknown): string {
   if (err instanceof PolicyError)
