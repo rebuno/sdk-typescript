@@ -1,6 +1,7 @@
 import { getExecution } from "./context.js";
 import {
   Blocked,
+  LeaseSuperseded,
   PolicyError,
   RateLimited,
   REFUSAL_TYPE,
@@ -185,7 +186,10 @@ function refusalResponse(e: unknown): Response | null {
   if (e instanceof Blocked) decision = "blocked";
   else if (e instanceof PolicyError) decision = "denied";
   else if (e instanceof Terminated) decision = "execution_terminal";
-  else if (e instanceof RateLimited) {
+  else if (e instanceof LeaseSuperseded) {
+    decision = "lease_superseded";
+    status = 409;
+  } else if (e instanceof RateLimited) {
     decision = "rate_limited";
     status = 429;
   } else return null;

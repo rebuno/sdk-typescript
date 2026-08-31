@@ -71,6 +71,19 @@ export class Blocked extends RebunoError {
 /** Control-flow signal: the execution is terminal (e.g. cancelled). */
 export class Terminated extends RebunoError {}
 
+/**
+ * Control-flow signal: a newer delivery attempt owns this dispatch.
+ *
+ * The kernel refuses every mutation from the superseded attempt. The handler
+ * stops where it stands and returns 200, leaving the execution to the attempt
+ * that replaced it.
+ */
+export class LeaseSuperseded extends APIError {
+  constructor(message = "dispatch lease superseded") {
+    super(message, "lease_superseded", 409);
+  }
+}
+
 export const REFUSAL_TYPE = "rebuno_refusal";
 
 const REFUSAL_RE = new RegExp(`${REFUSAL_TYPE}: (\\w+)(?: reason=(.*))?`);
@@ -92,8 +105,8 @@ export function refusalMessage(decision: string, reason = ""): string {
  *
  * A step the kernel refuses (approval pending, policy denial, rate limit) reaches
  * an LLM call as an HTTP error. Call this on the error the provider threw to get
- * `Blocked`, `PolicyError`, `RateLimited` or `Terminated` back, so the dispatch
- * unwinds. Returns silently for any other error.
+ * `Blocked`, `PolicyError`, `RateLimited`, `Terminated` or `LeaseSuperseded`
+ * back, so the dispatch unwinds. Returns silently for any other error.
  */
 export function raiseForRefusal(err: unknown): void {
   // err and the errors it was thrown from.
@@ -109,6 +122,7 @@ export function raiseForRefusal(err: unknown): void {
     if (decision === "blocked" || decision === "execution_blocked")
       throw new Blocked();
     if (decision === "execution_terminal") throw new Terminated(reason);
+    if (decision === "lease_superseded") throw new LeaseSuperseded();
     if (decision === "denied") throw new PolicyError(reason);
     if (decision === "rate_limited") throw new RateLimited(reason);
     return;
@@ -128,6 +142,7 @@ const ERROR_BY_CODE: Record<
   unauthorized: UnauthorizedError,
   forbidden: ForbiddenError,
   conflict: APIError,
+  lease_superseded: LeaseSuperseded,
 };
 
 export function errorFromResponse(

@@ -1,12 +1,13 @@
 import {
   Blocked,
+  LeaseSuperseded,
   PolicyError,
   RateLimited,
   RebunoError,
   Terminated,
   ToolError,
 } from "./errors.js";
-import type { KernelClient } from "./kernel.js";
+import type { DispatchLease, KernelClient } from "./kernel.js";
 import type { StepDecision } from "./types.js";
 
 type Idempotency = "safe_to_retry" | "at_most_once";
@@ -15,34 +16,42 @@ type StepKind = "tool_call" | "llm_call" | "local";
 export interface ExecutionContextOptions {
   kernel: KernelClient;
   executionId: string;
-  dispatchId: string;
+  lease: DispatchLease;
   agentId: string;
   input: unknown;
   status?: string;
-  signal?: AbortSignal;
+  controller?: AbortController;
 }
 
 /** One per dispatch. Submits effects to the kernel and applies its decisions. */
 export class ExecutionContext {
   readonly id: string;
   readonly dispatchId: string;
+  readonly dispatchAttempt: number;
   readonly agentId: string;
   readonly input: unknown;
-  /** Aborted once a newer dispatch for this execution supersedes this run. */
-  readonly signal: AbortSignal;
   status: string;
   /** The Blocked or Terminated this context threw, if any. */
   suspension: Blocked | Terminated | null = null;
   private kernel: KernelClient;
+  private lease: DispatchLease;
+  private ctrl: AbortController;
 
   constructor(o: ExecutionContextOptions) {
     this.kernel = o.kernel;
     this.id = o.executionId;
-    this.dispatchId = o.dispatchId;
+    this.lease = o.lease;
+    this.dispatchId = o.lease.dispatchId;
+    this.dispatchAttempt = o.lease.attempt;
     this.agentId = o.agentId;
     this.input = o.input;
-    this.signal = o.signal ?? new AbortController().signal;
+    this.ctrl = o.controller ?? new AbortController();
     this.status = o.status ?? "running";
+  }
+
+  /** Aborted once a newer dispatch for this execution supersedes this run. */
+  get signal(): AbortSignal {
+    return this.ctrl.signal;
   }
 
   /**
@@ -60,10 +69,7 @@ export class ExecutionContext {
     args: unknown;
     idempotency: string;
   }): Promise<{ stepId: string; dec: StepDecision }> {
-    const dec = await this.kernel.submitStep(this.id, {
-      ...p,
-      dispatchId: this.dispatchId,
-    });
+    const dec = await this.kernel.submitStep(this.id, p, this.lease);
     return { stepId: dec.stepId, dec };
   }
 
@@ -95,14 +101,21 @@ export class ExecutionContext {
    * fully blocking body starves it. Everything long in a handler (LLM/provider
    * calls, MCP tools, kernel round-trips) is I/O-bound and async, so this holds.
    * A superseded run stops renewing: the lease belongs to the newer dispatch.
+   * Losing the lease aborts this run, so a handler the kernel has replaced is
+   * refused at its next kernel call instead of working on.
    */
   startHeartbeat(intervalMs = 30000): () => void {
     const hb = setInterval(() => {
-      if (this.signal.aborted) {
+      if (this.ctrl.signal.aborted) {
         clearInterval(hb);
         return;
       }
-      void this.kernel.heartbeat(this.id).catch(() => {});
+      void this.kernel.heartbeat(this.id, this.lease).catch((e) => {
+        if (e instanceof LeaseSuperseded) {
+          clearInterval(hb);
+          this.ctrl.abort();
+        }
+      });
     }, intervalMs);
     return () => clearInterval(hb);
   }
@@ -136,7 +149,7 @@ export class ExecutionContext {
     this.raiseForDecision(dec);
 
     if (!opts.run) {
-      await this.kernel.completeStep(this.id, stepId, null);
+      await this.kernel.completeStep(this.id, stepId, null, this.lease);
       return null;
     }
     let result: unknown;
@@ -147,7 +160,8 @@ export class ExecutionContext {
         e instanceof Blocked ||
         e instanceof Terminated ||
         e instanceof PolicyError ||
-        e instanceof RateLimited
+        e instanceof RateLimited ||
+        e instanceof LeaseSuperseded
       )
         throw e;
       await this.failStepQuietly(stepId, e);
@@ -157,7 +171,7 @@ export class ExecutionContext {
         stepId,
       });
     }
-    await this.kernel.completeStep(this.id, stepId, result);
+    await this.kernel.completeStep(this.id, stepId, result, this.lease);
     return result;
   }
 
@@ -198,16 +212,19 @@ export class ExecutionContext {
 
   /** Record the assembled (streamed or whole) response as the step's durable result. */
   async recordLlm(stepId: string, result: unknown): Promise<void> {
-    await this.kernel.completeStep(this.id, stepId, result);
+    await this.kernel.completeStep(this.id, stepId, result, this.lease);
   }
 
   async failStepQuietly(stepId: string, error: unknown): Promise<void> {
     try {
-      await this.kernel.failStep(this.id, stepId, {
-        message: String(error instanceof Error ? error.message : error),
-      });
-    } catch {
-      /* best effort */
+      await this.kernel.failStep(
+        this.id,
+        stepId,
+        { message: String(error instanceof Error ? error.message : error) },
+        this.lease,
+      );
+    } catch (e) {
+      if (e instanceof LeaseSuperseded) throw e;
     }
   }
 }

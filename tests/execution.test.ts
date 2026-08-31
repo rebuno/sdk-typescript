@@ -1,7 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { execution, getExecution, runWithContext } from "../src/context.js";
-import { Blocked, PolicyError, ToolError } from "../src/errors.js";
+import {
+  Blocked,
+  LeaseSuperseded,
+  PolicyError,
+  ToolError,
+} from "../src/errors.js";
 import { ExecutionContext } from "../src/execution.js";
+
+const LEASE = { dispatchId: "d1", attempt: 3 };
 
 /** Stands in for the kernel: assigns each submitted step an id, the way the real
  * one does, so decisions carry the id the SDK must use to complete them. */
@@ -30,7 +37,7 @@ function ctxWith(kernel: any) {
   return new ExecutionContext({
     kernel,
     executionId: "e1",
-    dispatchId: "d1",
+    lease: LEASE,
     agentId: "a",
     input: { p: 1 },
     status: "running",
@@ -81,18 +88,23 @@ describe("invokeTool", () => {
     expect(body).not.toHaveBeenCalled();
   });
 
-  it("forwards the dispatch id on every submit", async () => {
+  it("forwards the lease on every submit", async () => {
     const kernel = fakeKernel();
     const ctx = ctxWith(kernel);
     await ctx.invokeTool("search", { q: "x" }, { run: async () => "fresh" });
-    expect(kernel.submitStep.mock.calls[0][1].dispatchId).toBe("d1");
+    expect(kernel.submitStep.mock.calls[0][2]).toEqual(LEASE);
   });
 
   it("completes the step under the id the kernel assigned", async () => {
     const kernel = fakeKernel();
     const ctx = ctxWith(kernel);
     await ctx.invokeTool("search", { q: "x" }, { run: async () => "fresh" });
-    expect(kernel.completeStep).toHaveBeenCalledWith("e1", "step-1", "fresh");
+    expect(kernel.completeStep).toHaveBeenCalledWith(
+      "e1",
+      "step-1",
+      "fresh",
+      LEASE,
+    );
   });
 
   it("maps denied decision to PolicyError", async () => {
@@ -153,5 +165,19 @@ describe("invokeTool", () => {
       "step-1",
       "step-2",
     ]);
+  });
+});
+
+describe("startHeartbeat", () => {
+  it("losing the lease aborts the run", async () => {
+    const kernel = fakeKernel({
+      heartbeat: vi.fn(async () => {
+        throw new LeaseSuperseded();
+      }),
+    });
+    const ctx = ctxWith(kernel);
+    const stop = ctx.startHeartbeat(1);
+    await vi.waitFor(() => expect(ctx.signal.aborted).toBe(true));
+    stop();
   });
 });

@@ -9,6 +9,7 @@ export {
   ConflictError,
   ForbiddenError,
   failureReason,
+  LeaseSuperseded,
   NetworkError,
   NotFoundError,
   PolicyError,

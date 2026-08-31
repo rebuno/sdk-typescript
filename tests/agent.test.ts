@@ -37,9 +37,14 @@ async function webhookRequest(
   secret: string,
   executionId: string,
   dispatchId = "d1",
+  attempt = 1,
 ) {
   const raw = new TextEncoder().encode(
-    JSON.stringify({ execution_id: executionId, dispatch_id: dispatchId }),
+    JSON.stringify({
+      execution_id: executionId,
+      dispatch_id: dispatchId,
+      dispatch_attempt: attempt,
+    }),
   );
   const sig = await signBody(secret, raw);
   return new Request(`${KERNEL}/webhook`, {
@@ -59,7 +64,11 @@ describe("Agent.fetch", () => {
     });
     agent.bind(async () => ({ ok: true }));
     const raw = new TextEncoder().encode(
-      JSON.stringify({ execution_id: "e1", dispatch_id: "d1" }),
+      JSON.stringify({
+        execution_id: "e1",
+        dispatch_id: "d1",
+        dispatch_attempt: 1,
+      }),
     );
     const req = new Request(`${KERNEL}/webhook`, {
       method: "POST",
@@ -78,7 +87,9 @@ describe("Agent.fetch", () => {
       fetch: f,
     });
     agent.bind(async () => ({}));
-    const raw = new TextEncoder().encode(JSON.stringify({ dispatch_id: "d1" }));
+    const raw = new TextEncoder().encode(
+      JSON.stringify({ dispatch_id: "d1", dispatch_attempt: 1 }),
+    );
     const sig = await signBody(SECRET, raw);
     const req = new Request(`${KERNEL}/webhook`, {
       method: "POST",
@@ -88,9 +99,15 @@ describe("Agent.fetch", () => {
     expect((await agent.fetch(req)).status).toBe(400);
   });
 
-  it("400 when dispatch_id is missing", async () => {
-    // Every effect this run submits must carry the dispatch it was sent under, so
-    // a payload missing one is unusable rather than silently degraded.
+  // Every mutation this run makes must carry the attempt it was sent under, so a
+  // payload the kernel cannot fence is unusable rather than silently degraded.
+  it.each([
+    ["no lease at all", {}],
+    ["no attempt", { dispatch_id: "d1" }],
+    ["attempt zero", { dispatch_id: "d1", dispatch_attempt: 0 }],
+    ["a non-integer attempt", { dispatch_id: "d1", dispatch_attempt: 1.5 }],
+    ["a boolean attempt", { dispatch_id: "d1", dispatch_attempt: true }],
+  ])("400 on a webhook with %s", async (_name, lease) => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
     const agent = new Agent("a1", {
       secret: SECRET,
@@ -99,7 +116,7 @@ describe("Agent.fetch", () => {
     });
     agent.bind(async () => ({}));
     const raw = new TextEncoder().encode(
-      JSON.stringify({ execution_id: "e1" }),
+      JSON.stringify({ execution_id: "e1", ...lease }),
     );
     const sig = await signBody(SECRET, raw);
     const req = new Request(`${KERNEL}/webhook`, {
@@ -133,7 +150,7 @@ describe("Agent.fetch", () => {
     expect(complete?.body).toEqual({ output: { echo: "hi" } });
   });
 
-  it("the dispatch id reaches the execution context", async () => {
+  it("the lease reaches the execution context", async () => {
     const { f } = kernelFetch({
       id: "e1",
       status: "running",
@@ -144,14 +161,14 @@ describe("Agent.fetch", () => {
       baseUrl: KERNEL,
       fetch: f,
     });
-    let seen = "";
+    let seen: [string, number] = ["", 0];
     agent.bind(async () => {
-      seen = execution().dispatchId;
+      seen = [execution().dispatchId, execution().dispatchAttempt];
       return {};
     });
-    await agent.fetch(await webhookRequest(SECRET, "e1", "d-42"));
+    await agent.fetch(await webhookRequest(SECRET, "e1", "d-42", 7));
     await agent.join();
-    expect(seen).toBe("d-42");
+    expect(seen).toEqual(["d-42", 7]);
   });
 
   it("skips terminal executions without running process", async () => {
@@ -265,7 +282,10 @@ describe("Agent.fetch", () => {
     expect(fail?.body.error).toBe(`policy_denied: ${REASON}`);
   });
 
-  it("a redelivery supersedes the previous run", async () => {
+  it.each([
+    ["another dispatch", "d2", 1],
+    ["a higher attempt of the same dispatch", "d1", 2],
+  ])("%s supersedes the running one", async (_name, dispatchId, attempt) => {
     const { f, calls } = kernelFetch({
       id: "e1",
       status: "running",
@@ -296,9 +316,9 @@ describe("Agent.fetch", () => {
       return { run: mine };
     });
 
-    await agent.fetch(await webhookRequest(SECRET, "e1", "d1"));
+    await agent.fetch(await webhookRequest(SECRET, "e1", "d1", 1));
     await firstStarted;
-    await agent.fetch(await webhookRequest(SECRET, "e1", "d2"));
+    await agent.fetch(await webhookRequest(SECRET, "e1", dispatchId, attempt));
     expect((agent as any).tasks.size).toBe(1);
     await agent.join();
     release();
@@ -314,6 +334,47 @@ describe("Agent.fetch", () => {
       false,
     );
     expect(calls.some((c) => c.url.includes("/steps"))).toBe(false);
+  });
+
+  // Attempts only order within a dispatch: a delivery the kernel has already
+  // moved past must not disturb the handler that replaced it.
+  it.each([
+    ["an identical redelivery", 1, 1],
+    ["an attempt the kernel has moved past", 2, 1],
+  ])("ignores %s", async (_name, first, second) => {
+    const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f,
+    });
+    let runs = 0;
+    let started!: () => void;
+    let release!: () => void;
+    const firstStarted = new Promise<void>((r) => {
+      started = r;
+    });
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    agent.bind(async () => {
+      runs++;
+      started();
+      await gate;
+      return {};
+    });
+
+    await agent.fetch(await webhookRequest(SECRET, "e1", "d1", first));
+    await firstStarted;
+    const running = (agent as any).tasks.get("e1");
+    const resp = await agent.fetch(
+      await webhookRequest(SECRET, "e1", "d1", second),
+    );
+    expect(resp.status).toBe(200);
+    expect((agent as any).tasks.get("e1")).toBe(running);
+    release();
+    await agent.join();
+    expect(runs).toBe(1);
   });
 
   it("runs distinct executions concurrently", async () => {

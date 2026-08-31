@@ -1,9 +1,9 @@
 import { signBody } from "./crypto.js";
 import {
   errorFromResponse,
+  LeaseSuperseded,
   NetworkError,
   NotFoundError,
-  Terminated,
 } from "./errors.js";
 import {
   type Execution,
@@ -27,6 +27,20 @@ export interface KernelClientOptions {
 
 const enc = (s: string) => new TextEncoder().encode(s);
 const EMPTY = new Uint8Array(0);
+
+/** The delivery attempt a webhook arrived under.
+ *
+ * Every mutation sends it back, so the kernel refuses a handler whose dispatch
+ * was reclaimed and re-delivered to a newer attempt. */
+export interface DispatchLease {
+  readonly dispatchId: string;
+  readonly attempt: number;
+}
+
+const leaseHeaders = (lease: DispatchLease) => ({
+  "Rebuno-Dispatch-Id": lease.dispatchId,
+  "Rebuno-Dispatch-Attempt": String(lease.attempt),
+});
 
 export class KernelClient {
   private agentId: string;
@@ -64,8 +78,7 @@ export class KernelClient {
     body: Uint8Array,
     extra?: Record<string, string>,
   ): Promise<Response> {
-    if (this.signal?.aborted)
-      throw new Terminated("superseded by a newer dispatch");
+    if (this.signal?.aborted) throw new LeaseSuperseded();
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "Rebuno-Agent-Id": this.agentId,
@@ -117,8 +130,8 @@ export class KernelClient {
       target: string;
       args: unknown;
       idempotency: string;
-      dispatchId: string;
     },
+    lease: DispatchLease,
   ): Promise<StepDecision> {
     const body = enc(
       JSON.stringify({
@@ -132,9 +145,7 @@ export class KernelClient {
       "POST",
       `/v0/executions/${executionId}/steps`,
       body,
-      {
-        "Rebuno-Dispatch-Id": p.dispatchId,
-      },
+      leaseHeaders(lease),
     );
     return parseStepDecision(await r.json());
   }
@@ -143,11 +154,13 @@ export class KernelClient {
     executionId: string,
     stepId: string,
     result: unknown,
+    lease: DispatchLease,
   ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/steps/${stepId}/complete`,
       enc(JSON.stringify({ result })),
+      leaseHeaders(lease),
     );
   }
 
@@ -155,11 +168,13 @@ export class KernelClient {
     executionId: string,
     stepId: string,
     error: unknown,
+    lease: DispatchLease,
   ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/steps/${stepId}/fail`,
       enc(JSON.stringify({ error })),
+      leaseHeaders(lease),
     );
   }
 
@@ -176,23 +191,38 @@ export class KernelClient {
     );
   }
 
-  async heartbeat(executionId: string): Promise<void> {
-    await this.send("POST", `/v0/executions/${executionId}/heartbeat`, EMPTY);
+  async heartbeat(executionId: string, lease: DispatchLease): Promise<void> {
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/heartbeat`,
+      EMPTY,
+      leaseHeaders(lease),
+    );
   }
 
-  async completeExecution(executionId: string, output: unknown): Promise<void> {
+  async completeExecution(
+    executionId: string,
+    output: unknown,
+    lease: DispatchLease,
+  ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/complete`,
       enc(JSON.stringify({ output })),
+      leaseHeaders(lease),
     );
   }
 
-  async failExecution(executionId: string, error: string): Promise<void> {
+  async failExecution(
+    executionId: string,
+    error: string,
+    lease: DispatchLease,
+  ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/fail`,
       enc(JSON.stringify({ error })),
+      leaseHeaders(lease),
     );
   }
 }

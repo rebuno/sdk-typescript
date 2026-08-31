@@ -2,6 +2,7 @@ import { runWithContext } from "./context.js";
 import {
   Blocked,
   failureReason,
+  LeaseSuperseded,
   PolicyError,
   RateLimited,
   raiseForRefusal,
@@ -9,7 +10,7 @@ import {
   ToolError,
 } from "./errors.js";
 import { ExecutionContext } from "./execution.js";
-import { type FetchFn, KernelClient } from "./kernel.js";
+import { type DispatchLease, type FetchFn, KernelClient } from "./kernel.js";
 
 /** Minimal Standard Schema v1 shape we consume for optional input validation. */
 interface StandardSchema {
@@ -54,7 +55,7 @@ export class Agent<TInput = any, TOutput = unknown> {
   private process?: ProcessFn<TInput, TOutput>;
   private tasks = new Map<
     string,
-    { promise: Promise<void>; ctrl: AbortController }
+    { lease: DispatchLease; promise: Promise<void>; ctrl: AbortController }
   >();
 
   constructor(agentId: string, opts: AgentOptions = {}) {
@@ -99,13 +100,25 @@ export class Agent<TInput = any, TOutput = unknown> {
       payload = null;
     }
     const executionId = payload?.execution_id as string | undefined;
-    const dispatchId = payload?.dispatch_id as string | undefined;
-    if (!executionId || !dispatchId) return new Response(null, { status: 400 });
+    const lease = leaseFrom(payload);
+    if (!executionId || !lease) return new Response(null, { status: 400 });
 
-    this.tasks.get(executionId)?.ctrl.abort();
+    const running = this.tasks.get(executionId);
+    if (running) {
+      // Attempts only order within a dispatch, so a repeat of the one running,
+      // or of one the kernel has moved past, is ignored. A different dispatch is
+      // fresh work and replaces what came before.
+      if (
+        lease.dispatchId === running.lease.dispatchId &&
+        lease.attempt <= running.lease.attempt
+      )
+        return new Response(null, { status: 200 });
+      running.ctrl.abort();
+    }
     const ctrl = new AbortController();
     const entry = {
-      promise: this.safeHandle(executionId, dispatchId, ctrl.signal),
+      lease,
+      promise: this.safeHandle(executionId, lease, ctrl),
       ctrl,
     };
     this.tasks.set(executionId, entry);
@@ -117,13 +130,18 @@ export class Agent<TInput = any, TOutput = unknown> {
 
   private async safeHandle(
     executionId: string,
-    dispatchId: string,
-    signal: AbortSignal,
+    lease: DispatchLease,
+    ctrl: AbortController,
   ): Promise<void> {
     try {
-      await this.handle(executionId, dispatchId, signal);
+      await this.handle(executionId, lease, ctrl);
     } catch (e) {
-      if (e instanceof Blocked || e instanceof Terminated) return;
+      if (
+        e instanceof Blocked ||
+        e instanceof Terminated ||
+        e instanceof LeaseSuperseded
+      )
+        return;
       console.error(
         `rebuno: unhandled error handling execution ${executionId}`,
         e,
@@ -133,13 +151,13 @@ export class Agent<TInput = any, TOutput = unknown> {
 
   private async handle(
     executionId: string,
-    dispatchId: string,
-    signal: AbortSignal,
+    lease: DispatchLease,
+    ctrl: AbortController,
   ): Promise<void> {
     if (!this.process) throw new Error("Agent.bind(process) was not called");
     // Scoped to this run: once superseded, its kernel calls are refused, so it
     // can neither renew the lease nor write for a dispatch it no longer owns.
-    const kernel = this.kernel.withSignal(signal);
+    const kernel = this.kernel.withSignal(ctrl.signal);
     const exec = await kernel.getExecution(executionId);
     if (
       exec.status === "completed" ||
@@ -151,11 +169,11 @@ export class Agent<TInput = any, TOutput = unknown> {
     const ctx = new ExecutionContext({
       kernel,
       executionId,
-      dispatchId,
+      lease,
       agentId: this.agentId,
       input: exec.input,
       status: exec.status,
-      signal,
+      controller: ctrl,
     });
 
     await runWithContext(ctx, async () => {
@@ -164,7 +182,11 @@ export class Agent<TInput = any, TOutput = unknown> {
         const res = await this.inputSchema["~standard"].validate(input);
         if ("issues" in res && res.issues) {
           const msg = res.issues.map((i) => i.message).join("; ");
-          await kernel.failExecution(executionId, `input_invalid: ${msg}`);
+          await kernel.failExecution(
+            executionId,
+            `input_invalid: ${msg}`,
+            lease,
+          );
           return;
         }
         input = (res as { value: unknown }).value;
@@ -175,14 +197,23 @@ export class Agent<TInput = any, TOutput = unknown> {
         output = await this.process!(input as TInput);
         if (ctx.suspension) throw ctx.suspension;
       } catch (e) {
-        if (e instanceof Blocked || e instanceof Terminated) throw e;
+        if (
+          e instanceof Blocked ||
+          e instanceof Terminated ||
+          e instanceof LeaseSuperseded
+        )
+          throw e;
         if (ctx.suspension) throw ctx.suspension;
         // Blocked and Terminated propagate; a denial or rate limit is rebound
         // onto e and fails the execution below.
         try {
           raiseForRefusal(e);
         } catch (refused) {
-          if (refused instanceof Blocked || refused instanceof Terminated)
+          if (
+            refused instanceof Blocked ||
+            refused instanceof Terminated ||
+            refused instanceof LeaseSuperseded
+          )
             throw refused;
           e = refused;
         }
@@ -194,12 +225,12 @@ export class Agent<TInput = any, TOutput = unknown> {
           )
         )
           console.error(`rebuno: process error execution_id=${executionId}`, e);
-        await kernel.failExecution(executionId, failureReason(e));
+        await kernel.failExecution(executionId, failureReason(e), lease);
         return;
       } finally {
         stopLease();
       }
-      await kernel.completeExecution(executionId, output);
+      await kernel.completeExecution(executionId, output, lease);
     });
   }
 
@@ -250,4 +281,15 @@ export class Agent<TInput = any, TOutput = unknown> {
     );
     await new Promise<void>((resolve) => server.on("close", resolve));
   }
+}
+
+/** The lease a webhook carries, or null if it is unusable. */
+function leaseFrom(
+  payload: Record<string, unknown> | null,
+): DispatchLease | null {
+  const dispatchId = payload?.dispatch_id;
+  const attempt = payload?.dispatch_attempt;
+  if (typeof dispatchId !== "string" || !dispatchId) return null;
+  if (!Number.isInteger(attempt) || (attempt as number) <= 0) return null;
+  return { dispatchId, attempt: attempt as number };
 }
