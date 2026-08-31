@@ -16,7 +16,7 @@ pnpm test        # vitest run
 pnpm test:watch  # vitest in watch mode
 pnpm typecheck   # tsc --noEmit
 pnpm lint        # biome check
-pnpm lint:fix    # biome check --write
+pnpm format      # biome check --write
 ```
 
 SDK documentation lives in the main repo under
