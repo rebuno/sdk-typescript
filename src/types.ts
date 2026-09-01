@@ -9,7 +9,6 @@ export type ExecutionStatus =
 export interface Execution {
   id: string;
   agentId: string;
-  agentVersion: string;
   input: unknown;
   status: ExecutionStatus;
   output: unknown;
@@ -65,7 +64,6 @@ export function parseExecution(r: Raw): Execution {
   return {
     id: str(r.id),
     agentId: str(r.agent_id),
-    agentVersion: str(r.agent_version),
     input: r.input ?? null,
     status: str(r.status, "pending") as ExecutionStatus,
     output: r.output ?? null,

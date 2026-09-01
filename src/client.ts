@@ -90,14 +90,9 @@ export class Client {
     return resp;
   }
 
-  async create(
-    agentId: string,
-    input?: unknown,
-    opts: { agentVersion?: string } = {},
-  ): Promise<Execution> {
+  async create(agentId: string, input?: unknown): Promise<Execution> {
     const body: Record<string, unknown> = { agent_id: agentId };
     if (input !== undefined) body.input = input;
-    if (opts.agentVersion) body.agent_version = opts.agentVersion;
     const r = await this.request("POST", "/v0/executions", { body });
     return parseExecution(await r.json());
   }

@@ -12,7 +12,6 @@ describe("parseExecution", () => {
     const e = parseExecution({
       id: "e1",
       agent_id: "a",
-      agent_version: "v1",
       input: { prompt: "hi" },
       status: "running",
       output: null,
@@ -21,7 +20,6 @@ describe("parseExecution", () => {
     expect(e).toEqual({
       id: "e1",
       agentId: "a",
-      agentVersion: "v1",
       input: { prompt: "hi" },
       status: "running",
       output: null,
