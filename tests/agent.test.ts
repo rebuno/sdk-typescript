@@ -44,6 +44,7 @@ async function webhookRequest(
       execution_id: executionId,
       dispatch_id: dispatchId,
       dispatch_attempt: attempt,
+      lease_timeout_seconds: 120,
     }),
   );
   const sig = await signBody(secret, raw);
@@ -107,6 +108,19 @@ describe("Agent.fetch", () => {
     ["attempt zero", { dispatch_id: "d1", dispatch_attempt: 0 }],
     ["a non-integer attempt", { dispatch_id: "d1", dispatch_attempt: 1.5 }],
     ["a boolean attempt", { dispatch_id: "d1", dispatch_attempt: true }],
+    ["no timeout", { dispatch_id: "d1", dispatch_attempt: 1 }],
+    [
+      "a non-numeric timeout",
+      { dispatch_id: "d1", dispatch_attempt: 1, lease_timeout_seconds: "120" },
+    ],
+    [
+      "a boolean timeout",
+      { dispatch_id: "d1", dispatch_attempt: 1, lease_timeout_seconds: true },
+    ],
+    [
+      "a zero timeout",
+      { dispatch_id: "d1", dispatch_attempt: 1, lease_timeout_seconds: 0 },
+    ],
   ])("400 on a webhook with %s", async (_name, lease) => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
     const agent = new Agent("a1", {

@@ -28,6 +28,8 @@ export interface KernelClientOptions {
 const enc = (s: string) => new TextEncoder().encode(s);
 const EMPTY = new Uint8Array(0);
 
+export const MAX_HEARTBEAT_INTERVAL_MS = 30000;
+
 /** The delivery attempt a webhook arrived under.
  *
  * Every mutation sends it back, so the kernel refuses a handler whose dispatch
@@ -35,7 +37,12 @@ const EMPTY = new Uint8Array(0);
 export interface DispatchLease {
   readonly dispatchId: string;
   readonly attempt: number;
+  readonly timeoutMs: number;
 }
+
+/** Three renewals per lease period, capped at {@link MAX_HEARTBEAT_INTERVAL_MS}. */
+export const heartbeatIntervalMs = (lease: DispatchLease): number =>
+  Math.min(lease.timeoutMs / 3, MAX_HEARTBEAT_INTERVAL_MS);
 
 const leaseHeaders = (lease: DispatchLease) => ({
   "Rebuno-Dispatch-Id": lease.dispatchId,

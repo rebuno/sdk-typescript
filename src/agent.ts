@@ -289,7 +289,10 @@ function leaseFrom(
 ): DispatchLease | null {
   const dispatchId = payload?.dispatch_id;
   const attempt = payload?.dispatch_attempt;
+  const timeout = payload?.lease_timeout_seconds;
   if (typeof dispatchId !== "string" || !dispatchId) return null;
   if (!Number.isInteger(attempt) || (attempt as number) <= 0) return null;
-  return { dispatchId, attempt: attempt as number };
+  if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout <= 0)
+    return null;
+  return { dispatchId, attempt: attempt as number, timeoutMs: timeout * 1000 };
 }

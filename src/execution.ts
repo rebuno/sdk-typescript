@@ -7,7 +7,11 @@ import {
   Terminated,
   ToolError,
 } from "./errors.js";
-import type { DispatchLease, KernelClient } from "./kernel.js";
+import {
+  type DispatchLease,
+  heartbeatIntervalMs,
+  type KernelClient,
+} from "./kernel.js";
 import type { StepDecision } from "./types.js";
 
 type Idempotency = "safe_to_retry" | "at_most_once";
@@ -104,7 +108,7 @@ export class ExecutionContext {
    * Losing the lease aborts this run, so a handler the kernel has replaced is
    * refused at its next kernel call instead of working on.
    */
-  startHeartbeat(intervalMs = 30000): () => void {
+  startHeartbeat(): () => void {
     const hb = setInterval(() => {
       if (this.ctrl.signal.aborted) {
         clearInterval(hb);
@@ -116,7 +120,7 @@ export class ExecutionContext {
           this.ctrl.abort();
         }
       });
-    }, intervalMs);
+    }, heartbeatIntervalMs(this.lease));
     return () => clearInterval(hb);
   }
 

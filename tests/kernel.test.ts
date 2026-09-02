@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vitest";
 import { LeaseSuperseded } from "../src/errors.js";
 import { type DispatchLease, KernelClient } from "../src/kernel.js";
 
-const LEASE: DispatchLease = { dispatchId: "d1", attempt: 3 };
+const LEASE: DispatchLease = {
+  dispatchId: "d1",
+  attempt: 3,
+  timeoutMs: 120000,
+};
 
 function fakeFetch(handler: (url: string, init: RequestInit) => Response) {
   return vi.fn(async (url: string, init: RequestInit) => handler(url, init));

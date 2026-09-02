@@ -22,7 +22,7 @@ const ctx = (k: any) =>
   new ExecutionContext({
     kernel: k,
     executionId: "e1",
-    lease: { dispatchId: "d1", attempt: 1 },
+    lease: { dispatchId: "d1", attempt: 1, timeoutMs: 120000 },
     agentId: "a",
     input: {},
   });

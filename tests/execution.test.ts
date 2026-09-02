@@ -8,7 +8,7 @@ import {
 } from "../src/errors.js";
 import { ExecutionContext } from "../src/execution.js";
 
-const LEASE = { dispatchId: "d1", attempt: 3 };
+const LEASE = { dispatchId: "d1", attempt: 3, timeoutMs: 120000 };
 
 /** Stands in for the kernel: assigns each submitted step an id, the way the real
  * one does, so decisions carry the id the SDK must use to complete them. */
@@ -33,11 +33,11 @@ function fakeKernel(overrides: Partial<Record<string, any>> = {}) {
   };
 }
 
-function ctxWith(kernel: any) {
+function ctxWith(kernel: any, lease = LEASE) {
   return new ExecutionContext({
     kernel,
     executionId: "e1",
-    lease: LEASE,
+    lease,
     agentId: "a",
     input: { p: 1 },
     status: "running",
@@ -175,8 +175,8 @@ describe("startHeartbeat", () => {
         throw new LeaseSuperseded();
       }),
     });
-    const ctx = ctxWith(kernel);
-    const stop = ctx.startHeartbeat(1);
+    const ctx = ctxWith(kernel, { ...LEASE, timeoutMs: 3 });
+    const stop = ctx.startHeartbeat();
     await vi.waitFor(() => expect(ctx.signal.aborted).toBe(true));
     stop();
   });
