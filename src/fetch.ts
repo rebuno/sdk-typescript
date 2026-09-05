@@ -23,7 +23,8 @@ interface ResponseRecord {
 
 const DELTA_FLUSH_CHARS = 2000;
 const DELTA_FLUSH_INTERVAL_MS = 50;
-const DELTA_MAX_CHARS = 1750; // the kernel caps a delta at 7000 bytes; UTF-8 runs to 4 bytes a char
+// the kernel caps a delta at 7000 bytes; UTF-8 runs to 4 bytes a char
+const DELTA_MAX_CHARS = 1750;
 
 /** A `fetch`-compatible function that records LLM calls as durable steps. */
 export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
@@ -54,13 +55,9 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
 
     const resp = await inner(input, init);
     const contentType = resp.headers.get("content-type") ?? "";
-    if (resp.status < 400 && isEventStream(contentType) && resp.body) {
-      // Tee the live stream to the caller while recording the assembled whole.
+    if (resp.status < 400 && isEventStream(contentType) && resp.body)
       return teeResponse(ctx, stepId, resp);
-    }
 
-    // Whole response (including error statuses): read it, record it, and hand
-    // back a reconstructed response.
     let body: string;
     try {
       body = await resp.text();
@@ -80,7 +77,6 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
   }) as FetchFn;
 }
 
-/** Default rebunoFetch, over the global fetch. */
 export const rebunoFetch: FetchFn = createRebunoFetch();
 
 /**
@@ -115,7 +111,6 @@ function teeResponse(
     pending = "";
   };
 
-  // Record the assembled response, or fail the step, exactly once.
   const finish = async (error?: unknown) => {
     if (done) return;
     done = true;
@@ -145,8 +140,8 @@ function teeResponse(
           controller.close();
           return;
         }
-        // Accumulate before enqueuing: a consumer that breaks right after
-        // receiving a chunk never resumes us, so recording after would drop it.
+        // A consumer that breaks right after a chunk never resumes us, so
+        // recording after the enqueue would drop it.
         const text = decoder.decode(value, { stream: true });
         if (text) {
           chunks.push(text);
@@ -167,7 +162,7 @@ function teeResponse(
       }
     },
     async cancel() {
-      // Consumer closed without draining to EOF: record here too. finish is idempotent.
+      // A consumer may close without draining to EOF. finish is idempotent.
       await finish();
       await reader.cancel().catch(() => {});
     },
@@ -179,7 +174,6 @@ function teeResponse(
   });
 }
 
-/** A refused decision as an HTTP error carrying the refusal marker, else null. */
 function refusalResponse(e: unknown): Response | null {
   let status = 403;
   let decision: string;
@@ -207,7 +201,9 @@ function refusalResponse(e: unknown): Response | null {
 
 function jsonBody(init?: RequestInit): Record<string, unknown> | null {
   const body = init?.body;
-  if (typeof body !== "string") return null; // only string JSON bodies are identifiable LLM calls
+  // A non-string body (file upload, form post) carries no model to record the
+  // step against.
+  if (typeof body !== "string") return null;
   try {
     const parsed = JSON.parse(body);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -218,7 +214,6 @@ function jsonBody(init?: RequestInit): Record<string, unknown> | null {
   }
 }
 
-/** True for a Server-Sent-Events content type. */
 function isEventStream(contentType: string): boolean {
   return (
     contentType.split(";", 1)[0].trim().toLowerCase() === "text/event-stream"

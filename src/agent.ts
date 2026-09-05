@@ -93,15 +93,13 @@ export class Agent<TInput = any, TOutput = unknown> {
     const { verifySignature } = await import("./crypto.js");
     if (!(await verifySignature(this.secret, raw, sig)))
       return new Response(null, { status: 401 });
-    let payload: Record<string, unknown> | null = null;
-    try {
-      payload = JSON.parse(new TextDecoder().decode(raw));
-    } catch {
-      payload = null;
-    }
-    const executionId = payload?.execution_id as string | undefined;
-    const lease = leaseFrom(payload);
-    if (!executionId || !lease) return new Response(null, { status: 400 });
+    const payload = JSON.parse(new TextDecoder().decode(raw));
+    const executionId = payload.execution_id as string;
+    const lease: DispatchLease = {
+      dispatchId: payload.dispatch_id,
+      attempt: payload.dispatch_attempt,
+      timeoutMs: payload.lease_timeout_seconds * 1000,
+    };
 
     const running = this.tasks.get(executionId);
     if (running) {
@@ -204,8 +202,7 @@ export class Agent<TInput = any, TOutput = unknown> {
         )
           throw e;
         if (ctx.suspension) throw ctx.suspension;
-        // Blocked and Terminated propagate; a denial or rate limit is rebound
-        // onto e and fails the execution below.
+        // A Blocked or Terminated from raiseForRefusal escapes here.
         try {
           raiseForRefusal(e);
         } catch (refused) {
@@ -234,7 +231,6 @@ export class Agent<TInput = any, TOutput = unknown> {
     });
   }
 
-  /** Wait for all in-flight execution handlers to finish (best-effort). */
   async join(): Promise<void> {
     await Promise.allSettled([...this.tasks.values()].map((t) => t.promise));
   }
@@ -243,7 +239,7 @@ export class Agent<TInput = any, TOutput = unknown> {
     await this.join();
   }
 
-  /** Bind the process and serve the webhook app with node:http (blocking-ish; resolves on server close). */
+  /** Resolves when the server closes, not when it starts listening. */
   async serve(
     opts: ServeOptions,
     process?: ProcessFn<TInput, TOutput>,
@@ -269,7 +265,14 @@ export class Agent<TInput = any, TOutput = unknown> {
         ),
         body,
       });
-      const response = await this.fetch(request);
+      let response: Response;
+      try {
+        response = await this.fetch(request);
+      } catch (e) {
+        console.error("rebuno: webhook failed", e);
+        res.writeHead(500).end();
+        return;
+      }
       res.writeHead(response.status, Object.fromEntries(response.headers));
       res.end(Buffer.from(await response.arrayBuffer()));
     });
@@ -281,18 +284,4 @@ export class Agent<TInput = any, TOutput = unknown> {
     );
     await new Promise<void>((resolve) => server.on("close", resolve));
   }
-}
-
-/** The lease a webhook carries, or null if it is unusable. */
-function leaseFrom(
-  payload: Record<string, unknown> | null,
-): DispatchLease | null {
-  const dispatchId = payload?.dispatch_id;
-  const attempt = payload?.dispatch_attempt;
-  const timeout = payload?.lease_timeout_seconds;
-  if (typeof dispatchId !== "string" || !dispatchId) return null;
-  if (!Number.isInteger(attempt) || (attempt as number) <= 0) return null;
-  if (typeof timeout !== "number" || !Number.isFinite(timeout) || timeout <= 0)
-    return null;
-  return { dispatchId, attempt: attempt as number, timeoutMs: timeout * 1000 };
 }

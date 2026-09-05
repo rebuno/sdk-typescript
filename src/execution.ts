@@ -35,7 +35,6 @@ export class ExecutionContext {
   readonly agentId: string;
   readonly input: unknown;
   status: string;
-  /** The Blocked or Terminated this context threw, if any. */
   suspension: Blocked | Terminated | null = null;
   private kernel: KernelClient;
   private lease: DispatchLease;
@@ -59,13 +58,8 @@ export class ExecutionContext {
   }
 
   /**
-   * Ask the kernel to decide this effect, and return `(stepId, decision)`.
-   *
-   * The kernel assigns the step id: it counts occurrences of this effect within
-   * the dispatch under its own lock, so concurrent identical calls get distinct
-   * steps without any coordination here. `stepId` is empty for decisions that
-   * recorded no step (`rate_limited`, `execution_*`), which
-   * {@link raiseForDecision} turns into an exception before it is used.
+   * The kernel counts occurrences of this effect under its own lock, so
+   * concurrent identical calls get distinct step ids without coordination here.
    */
   private async submit(p: {
     kind: string;
@@ -80,9 +74,9 @@ export class ExecutionContext {
   private raiseForDecision(dec: StepDecision): void {
     switch (dec.decision) {
       case "denied":
-        throw new PolicyError(dec.reason || "policy_denied");
+        throw new PolicyError(dec.reason);
       case "rate_limited":
-        throw new RateLimited(dec.reason || "rate_limit_exceeded");
+        throw new RateLimited(dec.reason);
       case "blocked":
       case "execution_blocked":
         this.suspension = new Blocked();
@@ -98,13 +92,10 @@ export class ExecutionContext {
   }
 
   /**
-   * Renew the dispatch lease until the returned stop function is called, so the
-   * kernel doesn't reclaim the dispatch and re-deliver it to a second handler.
+   * Renew the dispatch lease until the returned stop function is called. A
+   * blocking body starves the heartbeat: it must yield to the event loop, or
+   * the kernel reclaims the dispatch mid-handler.
    *
-   * The renewed body must yield to the event loop for the heartbeat to fire — a
-   * fully blocking body starves it. Everything long in a handler (LLM/provider
-   * calls, MCP tools, kernel round-trips) is I/O-bound and async, so this holds.
-   * A superseded run stops renewing: the lease belongs to the newer dispatch.
    * Losing the lease aborts this run, so a handler the kernel has replaced is
    * refused at its next kernel call instead of working on.
    */
@@ -200,8 +191,8 @@ export class ExecutionContext {
     return { stepId, dec };
   }
 
-  /** Publish a live delta for an in-flight streamed step. Best-effort: deltas are
-   * advisory, so failures are swallowed — the recorded whole is the durable result. */
+  /** Publish a live delta for an in-flight streamed step. Best-effort: deltas
+   * are advisory, the recorded whole is the durable result. */
   async publishLlmDelta(
     stepId: string,
     seq: number,
@@ -214,7 +205,6 @@ export class ExecutionContext {
     }
   }
 
-  /** Record the assembled (streamed or whole) response as the step's durable result. */
   async recordLlm(stepId: string, result: unknown): Promise<void> {
     await this.kernel.completeStep(this.id, stepId, result, this.lease);
   }

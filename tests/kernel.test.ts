@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { LeaseSuperseded } from "../src/errors.js";
+import { LeaseSuperseded, Terminated } from "../src/errors.js";
 import { type DispatchLease, KernelClient } from "../src/kernel.js";
 
 const LEASE: DispatchLease = {
@@ -113,6 +113,23 @@ describe("KernelClient", () => {
     const k = new KernelClient(opts(f));
     await expect(k.heartbeat("e1", LEASE)).rejects.toBeInstanceOf(
       LeaseSuperseded,
+    );
+  });
+
+  it("a terminal execution surfaces as Terminated", async () => {
+    const f = fakeFetch(
+      () =>
+        new Response(
+          JSON.stringify({
+            code: "execution_terminal",
+            message: "execution terminal",
+          }),
+          { status: 409 },
+        ),
+    );
+    const k = new KernelClient(opts(f));
+    await expect(k.completeExecution("e1", {}, LEASE)).rejects.toBeInstanceOf(
+      Terminated,
     );
   });
 

@@ -1,9 +1,7 @@
 export class RebunoError extends Error {
-  details: Record<string, unknown>;
-  constructor(message: string, details?: Record<string, unknown>) {
+  constructor(message: string) {
     super(message);
     this.name = new.target.name;
-    this.details = details ?? {};
   }
 }
 
@@ -12,13 +10,8 @@ export class NetworkError extends RebunoError {}
 export class APIError extends RebunoError {
   code: string;
   statusCode: number;
-  constructor(
-    message: string,
-    code: string,
-    statusCode: number,
-    details?: Record<string, unknown>,
-  ) {
-    super(message, details);
+  constructor(message: string, code: string, statusCode: number) {
+    super(message);
     this.code = code;
     this.statusCode = statusCode;
   }
@@ -109,7 +102,6 @@ export function refusalMessage(decision: string, reason = ""): string {
  * back, so the dispatch unwinds. Returns silently for any other error.
  */
 export function raiseForRefusal(err: unknown): void {
-  // err and the errors it was thrown from.
   for (let e = err, i = 0; e != null && i < 10; i++, e = (e as Error).cause) {
     const message = String((e as Error).message ?? e);
     const m = REFUSAL_RE.exec(message);
@@ -141,19 +133,25 @@ const ERROR_BY_CODE: Record<
   validation_error: ValidationError,
   unauthorized: UnauthorizedError,
   forbidden: ForbiddenError,
-  conflict: APIError,
+  conflict: ConflictError,
   lease_superseded: LeaseSuperseded,
 };
 
-export function errorFromResponse(
-  code: string,
-  message: string,
-  statusCode: number,
-  ruleId = "",
-): RebunoError {
-  if (code === "policy_denied") return new PolicyError(message, ruleId);
+export async function errorFromResponse(resp: Response): Promise<RebunoError> {
+  const text = await resp.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    /* non-JSON */
+  }
+  const code = (data.code as string) ?? "internal_error";
+  const message = (data.message as string) ?? (text || "request failed");
+  if (code === "policy_denied")
+    return new PolicyError(message, (data.rule_id as string) ?? "");
+  if (code === "execution_terminal") return new Terminated(message);
   const Cls = ERROR_BY_CODE[code] ?? APIError;
-  return new Cls(message, code, statusCode);
+  return new Cls(message, code, resp.status);
 }
 
 /**

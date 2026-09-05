@@ -31,7 +31,7 @@ export function wrapMcpTool(
 
   return wrapTool({
     name: toolId,
-    invoke: (args) => opts.call(name, args), // wire call uses the bare name
+    invoke: (args) => opts.call(name, args),
     description,
     inputSchema: schema,
     idempotency: opts.idempotency ?? "safe_to_retry",
@@ -50,7 +50,6 @@ function stripNull(args: Record<string, unknown>): Record<string, unknown> {
   return Object.fromEntries(Object.entries(args).filter(([, v]) => v != null));
 }
 
-/** Flatten a standard MCP CallToolResult: structured content, else joined text blocks. */
 function defaultFlatten(raw: unknown): unknown {
   if (!raw || typeof raw !== "object") return raw;
   const o = raw as Record<string, unknown>;

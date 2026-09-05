@@ -15,7 +15,6 @@ function toHex(buf: ArrayBuffer): string {
   return out;
 }
 
-/** `sha256=<hex(HMAC-SHA256(secret, body))>`. */
 export async function signBody(
   secret: string,
   body: Uint8Array,
@@ -25,7 +24,6 @@ export async function signBody(
   return `sha256=${toHex(sig)}`;
 }
 
-/** Constant-time string compare (equal-length only). */
 function timingSafeEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false;
   let diff = 0;

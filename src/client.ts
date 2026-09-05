@@ -11,8 +11,6 @@ import {
   type Step,
 } from "./types.js";
 
-const USER_AGENT = "rebuno-typescript-sdk";
-
 export interface ClientOptions {
   baseUrl?: string;
   apiKey?: string;
@@ -43,7 +41,7 @@ export class Client {
     path: string,
     opts: { body?: unknown; query?: Record<string, string | number> } = {},
   ): Promise<Response> {
-    const headers: Record<string, string> = { "User-Agent": USER_AGENT };
+    const headers: Record<string, string> = {};
     if (this.apiKey) headers.Authorization = `Bearer ${this.apiKey}`;
     let url = this.baseUrl + path;
     if (opts.query) {
@@ -72,21 +70,7 @@ export class Client {
     } finally {
       clearTimeout(timer);
     }
-    if (resp.status >= 400) {
-      const text = await resp.text();
-      let data: Record<string, unknown> = {};
-      try {
-        data = JSON.parse(text) as Record<string, unknown>;
-      } catch {
-        /* non-JSON */
-      }
-      throw errorFromResponse(
-        (data.code as string) ?? "internal_error",
-        (data.message as string) ?? (text || "request failed"),
-        resp.status,
-        (data.rule_id as string) ?? "",
-      );
-    }
+    if (resp.status >= 400) throw await errorFromResponse(resp);
     return resp;
   }
 

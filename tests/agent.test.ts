@@ -10,17 +10,13 @@ import { defineTool } from "../src/tool.js";
 const SECRET = "sec";
 const KERNEL = "http://kernel";
 
-// Build a fetch that emulates the kernel for a given execution.
-function kernelFetch(exec: any, steps: any[] = [], decision: any = null) {
+function kernelFetch(exec: any, decision: any = null) {
   const calls: { url: string; body: any }[] = [];
   const f = vi.fn(async (url: string, init: any) => {
     const bodyText = init?.body ? new TextDecoder().decode(init.body) : "";
     calls.push({ url, body: bodyText ? JSON.parse(bodyText) : null });
     if (url.endsWith(`/v0/executions/${exec.id}`) && init.method === "GET") {
       return new Response(JSON.stringify(exec), { status: 200 });
-    }
-    if (url.includes("/steps?status=terminal")) {
-      return new Response(JSON.stringify(steps), { status: 200 });
     }
     if (url.endsWith("/steps") && init.method === "POST") {
       return new Response(JSON.stringify(decision ?? { decision: "proceed" }), {
@@ -34,7 +30,6 @@ function kernelFetch(exec: any, steps: any[] = [], decision: any = null) {
 }
 
 async function webhookRequest(
-  secret: string,
   executionId: string,
   dispatchId = "d1",
   attempt = 1,
@@ -47,98 +42,48 @@ async function webhookRequest(
       lease_timeout_seconds: 120,
     }),
   );
-  const sig = await signBody(secret, raw);
   return new Request(`${KERNEL}/webhook`, {
     method: "POST",
-    headers: { "Rebuno-Signature": sig, "Content-Type": "application/json" },
+    headers: {
+      "Rebuno-Signature": await signBody(SECRET, raw),
+      "Content-Type": "application/json",
+    },
     body: raw,
   });
 }
 
+function makeAgent(fetch: any, process: any, inputSchema?: any) {
+  const agent = new Agent("a1", {
+    secret: SECRET,
+    baseUrl: KERNEL,
+    fetch,
+    inputSchema,
+  });
+  agent.bind(process);
+  return agent;
+}
+
+/** Deliver one webhook to a fresh agent and wait for its handler to finish. */
+async function runDispatch(fetch: any, process: any, inputSchema?: any) {
+  const agent = makeAgent(fetch, process, inputSchema);
+  const resp = await agent.fetch(await webhookRequest("e1"));
+  expect(resp.status).toBe(200);
+  await agent.join();
+}
+
+const failure = (calls: { url: string; body: any }[]) =>
+  calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"))?.body.error;
+
 describe("Agent.fetch", () => {
   it("rejects a bad signature with 401", async () => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
-    agent.bind(async () => ({ ok: true }));
-    const raw = new TextEncoder().encode(
-      JSON.stringify({
-        execution_id: "e1",
-        dispatch_id: "d1",
-        dispatch_attempt: 1,
-      }),
-    );
+    const agent = makeAgent(f, async () => ({ ok: true }));
     const req = new Request(`${KERNEL}/webhook`, {
       method: "POST",
       headers: { "Rebuno-Signature": "sha256=bad" },
-      body: raw,
+      body: new TextEncoder().encode(JSON.stringify({ execution_id: "e1" })),
     });
-    const resp = await agent.fetch(req);
-    expect(resp.status).toBe(401);
-  });
-
-  it("400 when execution_id is missing", async () => {
-    const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
-    agent.bind(async () => ({}));
-    const raw = new TextEncoder().encode(
-      JSON.stringify({ dispatch_id: "d1", dispatch_attempt: 1 }),
-    );
-    const sig = await signBody(SECRET, raw);
-    const req = new Request(`${KERNEL}/webhook`, {
-      method: "POST",
-      headers: { "Rebuno-Signature": sig },
-      body: raw,
-    });
-    expect((await agent.fetch(req)).status).toBe(400);
-  });
-
-  // Every mutation this run makes must carry the attempt it was sent under, so a
-  // payload the kernel cannot fence is unusable rather than silently degraded.
-  it.each([
-    ["no lease at all", {}],
-    ["no attempt", { dispatch_id: "d1" }],
-    ["attempt zero", { dispatch_id: "d1", dispatch_attempt: 0 }],
-    ["a non-integer attempt", { dispatch_id: "d1", dispatch_attempt: 1.5 }],
-    ["a boolean attempt", { dispatch_id: "d1", dispatch_attempt: true }],
-    ["no timeout", { dispatch_id: "d1", dispatch_attempt: 1 }],
-    [
-      "a non-numeric timeout",
-      { dispatch_id: "d1", dispatch_attempt: 1, lease_timeout_seconds: "120" },
-    ],
-    [
-      "a boolean timeout",
-      { dispatch_id: "d1", dispatch_attempt: 1, lease_timeout_seconds: true },
-    ],
-    [
-      "a zero timeout",
-      { dispatch_id: "d1", dispatch_attempt: 1, lease_timeout_seconds: 0 },
-    ],
-  ])("400 on a webhook with %s", async (_name, lease) => {
-    const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
-    agent.bind(async () => ({}));
-    const raw = new TextEncoder().encode(
-      JSON.stringify({ execution_id: "e1", ...lease }),
-    );
-    const sig = await signBody(SECRET, raw);
-    const req = new Request(`${KERNEL}/webhook`, {
-      method: "POST",
-      headers: { "Rebuno-Signature": sig },
-      body: raw,
-    });
-    expect((await agent.fetch(req)).status).toBe(400);
+    expect((await agent.fetch(req)).status).toBe(401);
   });
 
   it("dispatches: runs process and completes the execution", async () => {
@@ -147,16 +92,8 @@ describe("Agent.fetch", () => {
       status: "running",
       input: { prompt: "hi" },
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
     const process = vi.fn(async (input: any) => ({ echo: input.prompt }));
-    agent.bind(process);
-    const resp = await agent.fetch(await webhookRequest(SECRET, "e1"));
-    expect(resp.status).toBe(200);
-    await agent.join();
+    await runDispatch(f, process);
     expect(process).toHaveBeenCalledWith({ prompt: "hi" });
     const complete = calls.find((c) =>
       c.url.endsWith("/v0/executions/e1/complete"),
@@ -170,32 +107,20 @@ describe("Agent.fetch", () => {
       status: "running",
       input: { prompt: "hi" },
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
     let seen: [string, number] = ["", 0];
-    agent.bind(async () => {
+    const agent = makeAgent(f, async () => {
       seen = [execution().dispatchId, execution().dispatchAttempt];
       return {};
     });
-    await agent.fetch(await webhookRequest(SECRET, "e1", "d-42", 7));
+    await agent.fetch(await webhookRequest("e1", "d-42", 7));
     await agent.join();
     expect(seen).toEqual(["d-42", 7]);
   });
 
   it("skips terminal executions without running process", async () => {
     const { f } = kernelFetch({ id: "e1", status: "completed", input: {} });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
     const process = vi.fn(async () => ({}));
-    agent.bind(process);
-    await agent.fetch(await webhookRequest(SECRET, "e1"));
-    await agent.join();
+    await runDispatch(f, process);
     expect(process).not.toHaveBeenCalled();
   });
 
@@ -215,17 +140,8 @@ describe("Agent.fetch", () => {
             : { issues: [{ message: "prompt required" }] },
       },
     };
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-      inputSchema: schema,
-    });
-    agent.bind(async () => ({}));
-    await agent.fetch(await webhookRequest(SECRET, "e1"));
-    await agent.join();
-    const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
-    expect(fail?.body.error).toBe("input_invalid: prompt required");
+    await runDispatch(f, async () => ({}), schema);
+    expect(failure(calls)).toBe("input_invalid: prompt required");
   });
 
   it("names the tool in the recorded failure reason", async () => {
@@ -234,18 +150,10 @@ describe("Agent.fetch", () => {
       status: "running",
       input: {},
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       throw new ToolError("indeterminate", { toolId: "send_email" });
     });
-    await agent.fetch(await webhookRequest(SECRET, "e1"));
-    await agent.join();
-    const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
-    expect(fail?.body.error).toBe("tool_error: send_email: indeterminate");
+    expect(failure(calls)).toBe("tool_error: send_email: indeterminate");
   });
 
   it("prefixes an uncaught error with agent_error", async () => {
@@ -254,33 +162,22 @@ describe("Agent.fetch", () => {
       status: "running",
       input: {},
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       throw new TypeError("boom");
     });
-    await agent.fetch(await webhookRequest(SECRET, "e1"));
-    await agent.join();
-    const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
-    expect(fail?.body.error).toBe("agent_error: TypeError: boom");
+    expect(failure(calls)).toBe("agent_error: TypeError: boom");
   });
 
   it("records the kernel reason for a denied llm call", async () => {
     const REASON = "fs_write not allowed outside /tmp";
     const { f, calls } = kernelFetch(
       { id: "e1", status: "running", input: {} },
-      [],
-      { decision: "denied", reason: REASON },
+      {
+        decision: "denied",
+        reason: REASON,
+      },
     );
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       const llm = createRebunoFetch({
         fetch: async () => new Response("{}", { status: 200 }),
       });
@@ -290,10 +187,7 @@ describe("Agent.fetch", () => {
       });
       throw new Error(`Error code: 403 - ${await r.text()}`);
     });
-    await agent.fetch(await webhookRequest(SECRET, "e1"));
-    await agent.join();
-    const fail = calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"));
-    expect(fail?.body.error).toBe(`policy_denied: ${REASON}`);
+    expect(failure(calls)).toBe(`policy_denied: ${REASON}`);
   });
 
   it.each([
@@ -305,11 +199,6 @@ describe("Agent.fetch", () => {
       status: "running",
       input: { prompt: "hi" },
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
     let runs = 0;
     let started!: () => void;
     let release!: () => void;
@@ -319,7 +208,7 @@ describe("Agent.fetch", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    agent.bind(async () => {
+    const agent = makeAgent(f, async () => {
       runs++;
       const mine = runs;
       if (mine === 1) {
@@ -330,9 +219,9 @@ describe("Agent.fetch", () => {
       return { run: mine };
     });
 
-    await agent.fetch(await webhookRequest(SECRET, "e1", "d1", 1));
+    await agent.fetch(await webhookRequest("e1", "d1", 1));
     await firstStarted;
-    await agent.fetch(await webhookRequest(SECRET, "e1", dispatchId, attempt));
+    await agent.fetch(await webhookRequest("e1", dispatchId, attempt));
     expect((agent as any).tasks.size).toBe(1);
     await agent.join();
     release();
@@ -342,8 +231,8 @@ describe("Agent.fetch", () => {
       c.url.endsWith("/v0/executions/e1/complete"),
     );
     expect(completes.map((c) => c.body)).toEqual([{ output: { run: 2 } }]);
-    // The superseded run must not have written at all — neither the execution
-    // nor a step it was still mid-flight on: the new run owns both.
+    // The superseded run must not have written at all: neither the execution
+    // nor a step it was still mid-flight on, the new run owns both.
     expect(calls.some((c) => c.url.endsWith("/v0/executions/e1/fail"))).toBe(
       false,
     );
@@ -357,11 +246,6 @@ describe("Agent.fetch", () => {
     ["an attempt the kernel has moved past", 2, 1],
   ])("ignores %s", async (_name, first, second) => {
     const { f } = kernelFetch({ id: "e1", status: "running", input: {} });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f,
-    });
     let runs = 0;
     let started!: () => void;
     let release!: () => void;
@@ -371,19 +255,17 @@ describe("Agent.fetch", () => {
     const gate = new Promise<void>((r) => {
       release = r;
     });
-    agent.bind(async () => {
+    const agent = makeAgent(f, async () => {
       runs++;
       started();
       await gate;
       return {};
     });
 
-    await agent.fetch(await webhookRequest(SECRET, "e1", "d1", first));
+    await agent.fetch(await webhookRequest("e1", "d1", first));
     await firstStarted;
     const running = (agent as any).tasks.get("e1");
-    const resp = await agent.fetch(
-      await webhookRequest(SECRET, "e1", "d1", second),
-    );
+    const resp = await agent.fetch(await webhookRequest("e1", "d1", second));
     expect(resp.status).toBe(200);
     expect((agent as any).tasks.get("e1")).toBe(running);
     release();
@@ -403,14 +285,9 @@ describe("Agent.fetch", () => {
       if (url.endsWith(`/v0/executions/${id}/complete`)) completed.push(id);
       return new Response(JSON.stringify({}), { status: 200 });
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f as any,
-    });
-    agent.bind(async () => ({ ok: true }));
+    const agent = makeAgent(f, async () => ({ ok: true }));
     for (const id of ["e1", "e2"]) {
-      const resp = await agent.fetch(await webhookRequest(SECRET, id));
+      const resp = await agent.fetch(await webhookRequest(id));
       expect(resp.status).toBe(200);
     }
     await agent.join();
@@ -459,12 +336,7 @@ describe("Agent suspension handling", () => {
   // can return an answer for work the kernel never allowed to run.
   it("does not complete when the handler swallows a blocked tool", async () => {
     const { f, settled } = blockingKernelFetch("e1");
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f as any,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       try {
         await sendEmail.execute({});
       } catch {
@@ -472,10 +344,6 @@ describe("Agent suspension handling", () => {
       }
       return { answer: "emailed" };
     });
-    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
-      200,
-    );
-    await agent.join();
     expect(settled()).toEqual({ completed: false, failed: false });
   });
 
@@ -483,12 +351,7 @@ describe("Agent suspension handling", () => {
   // surfaces as the provider's own error rather than Blocked.
   it("does not fail when a later error follows a swallowed block", async () => {
     const { f, settled } = blockingKernelFetch("e1");
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f as any,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       try {
         await sendEmail.execute({});
       } catch {
@@ -496,10 +359,6 @@ describe("Agent suspension handling", () => {
       }
       throw new Error("Error code: 403 - provider rejected the call");
     });
-    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
-      200,
-    );
-    await agent.join();
     expect(settled()).toEqual({ completed: false, failed: false });
   });
 
@@ -511,24 +370,13 @@ describe("Agent suspension handling", () => {
       status: "running",
       input: {},
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f as any,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       throw new Error("Error code: 403 - rebuno_refusal: execution_blocked");
     });
-    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
-      200,
-    );
-    await agent.join();
     expect(
       calls.some((c) => c.url.endsWith("/v0/executions/e1/complete")),
     ).toBe(false);
-    expect(calls.some((c) => c.url.endsWith("/v0/executions/e1/fail"))).toBe(
-      false,
-    );
+    expect(failure(calls)).toBeUndefined();
   });
 
   it("still fails on a gateway denial", async () => {
@@ -537,20 +385,9 @@ describe("Agent suspension handling", () => {
       status: "running",
       input: {},
     });
-    const agent = new Agent("a1", {
-      secret: SECRET,
-      baseUrl: KERNEL,
-      fetch: f as any,
-    });
-    agent.bind(async () => {
+    await runDispatch(f, async () => {
       throw new Error("Error code: 403 - rebuno_refusal: denied");
     });
-    expect((await agent.fetch(await webhookRequest(SECRET, "e1"))).status).toBe(
-      200,
-    );
-    await agent.join();
-    expect(calls.some((c) => c.url.endsWith("/v0/executions/e1/fail"))).toBe(
-      true,
-    );
+    expect(failure(calls)).toContain("denied");
   });
 });

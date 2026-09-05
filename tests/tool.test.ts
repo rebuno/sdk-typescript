@@ -1,31 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { runWithContext } from "../src/context.js";
-import { ExecutionContext } from "../src/execution.js";
 import { defineTool, wrapTool } from "../src/tool.js";
-
-function fakeKernel() {
-  return {
-    listTerminalSteps: vi.fn(async () => []),
-    submitStep: vi.fn(async () => ({
-      decision: "proceed",
-      result: null,
-      error: null,
-      approvalId: null,
-      reason: "",
-    })),
-    completeStep: vi.fn(async () => {}),
-    failStep: vi.fn(async () => {}),
-    heartbeat: vi.fn(async () => {}),
-  };
-}
-const ctx = (k: any) =>
-  new ExecutionContext({
-    kernel: k,
-    executionId: "e1",
-    lease: { dispatchId: "d1", attempt: 1, timeoutMs: 120000 },
-    agentId: "a",
-    input: {},
-  });
+import { fakeKernel, withContext } from "./helpers.js";
 
 describe("defineTool", () => {
   it("returns a callable carrying name/description/inputSchema and a durable execute", async () => {
@@ -41,7 +16,7 @@ describe("defineTool", () => {
     expect(t.inputSchema).toBe(schema);
 
     const k = fakeKernel();
-    const out = await runWithContext(ctx(k), () => t.execute({ q: "hi" }));
+    const out = await withContext(k, () => t.execute({ q: "hi" }));
     expect(out).toEqual(["hi"]);
     expect(k.submitStep).toHaveBeenCalledOnce();
     expect(k.submitStep.mock.calls[0][1].target).toBe("search");
@@ -53,14 +28,13 @@ describe("defineTool", () => {
       execute: async ({ q }: { q: string }) => [q],
     });
     const k = fakeKernel();
-    const out = await runWithContext(ctx(k), () => t({ q: "hi" }));
+    const out = await withContext(k, () => t({ q: "hi" }));
     expect(out).toEqual(["hi"]);
     expect(k.submitStep.mock.calls[0][1].target).toBe("search");
   });
 
   it("keeps name enumerable so spreading the tool preserves it", () => {
     const t = defineTool({ name: "search", execute: async () => 1 });
-    expect(t.name).toBe("search");
     expect({ ...t }.name).toBe("search");
   });
 
@@ -76,7 +50,7 @@ describe("defineTool", () => {
       execute: async () => "ok",
     });
     const k = fakeKernel();
-    await runWithContext(ctx(k), () => t.execute({}));
+    await withContext(k, () => t.execute({}));
     expect(k.submitStep.mock.calls[0][1].idempotency).toBe("at_most_once");
   });
 });
@@ -93,7 +67,7 @@ describe("wrapTool", () => {
       transformArgs: (a: any) => ({ ...a, injected: true }),
     });
     const k = fakeKernel();
-    const out = await runWithContext(ctx(k), () => t.execute({ a: 1 }));
+    const out = await withContext(k, () => t.execute({ a: 1 }));
     expect(invoke).toHaveBeenCalledWith({ a: 1, injected: true });
     expect(out).toEqual({ a: 1, injected: true });
     expect(k.submitStep.mock.calls[0][1].args).toEqual({

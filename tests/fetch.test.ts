@@ -234,22 +234,19 @@ describe("rebunoFetch streaming", () => {
     });
     const rf = createRebunoFetch({ fetch: inner as any });
 
-    // First run: tee bytes to the caller live, publish deltas, record the whole.
     const got = await runWithContext(ctx(k), async () =>
       drainStream(
         await rf("http://llm/v1/chat", { method: "POST", body: req }),
       ),
     );
-    expect(got).toBe(SSE); // caller received the full stream
+    expect(got).toBe(SSE);
     expect(calls).toBe(1);
     expect(k.submitStep.mock.calls[0][1].kind).toBe("llm_call");
-    expect(k.completed.length).toBe(1); // the assembled whole was recorded
-    // Live deltas reassemble to the full body with monotonic seqs from 0.
-    expect(k.deltas.length).toBeGreaterThanOrEqual(2); // size-based flush produced several
+    expect(k.completed.length).toBe(1);
+    expect(k.deltas.length).toBeGreaterThanOrEqual(2);
     expect(k.deltas.map((d) => d[2]).join("")).toBe(SSE);
     expect(k.deltas.map((d) => d[1])).toEqual(k.deltas.map((_, i) => i));
 
-    // Resume: replay the recorded whole as a stream — no provider call, no deltas.
     const nDeltas = k.deltas.length;
     const replayed = await runWithContext(ctx(k), async () =>
       drainStream(
@@ -257,8 +254,8 @@ describe("rebunoFetch streaming", () => {
       ),
     );
     expect(replayed).toBe(SSE);
-    expect(calls).toBe(1); // provider was NOT called again
-    expect(k.deltas.length).toBe(nDeltas); // replay publishes nothing
+    expect(calls).toBe(1); // the provider was not called again
+    expect(k.deltas.length).toBe(nDeltas);
   });
 
   it("records when the consumer stops at [DONE] without draining to EOF", async () => {
@@ -274,11 +271,11 @@ describe("rebunoFetch streaming", () => {
       const dec = new TextDecoder();
       for await (const chunk of resp.body as any) {
         got += dec.decode(chunk, { stream: true });
-        if (got.includes("[DONE]")) break; // stop early — do not pull to EOF
+        if (got.includes("[DONE]")) break;
       }
     });
-    expect(k.completed.length).toBe(1); // recorded on cancel, not left executing
-    expect(k.deltas.map((d) => d[2]).join("")).toBe(SSE); // all bytes still teed
+    expect(k.completed.length).toBe(1);
+    expect(k.deltas.map((d) => d[2]).join("")).toBe(SSE);
   });
 
   it("fails the step on a mid-stream error instead of recording a partial", async () => {
@@ -297,7 +294,7 @@ describe("rebunoFetch streaming", () => {
       });
       await expect(drainStream(resp)).rejects.toThrow(/connection dropped/);
     });
-    expect(k.completed).toEqual([]); // failed the step instead of recording a partial
+    expect(k.completed).toEqual([]);
     expect(k.failStep).toHaveBeenCalledOnce();
   });
 
@@ -315,7 +312,7 @@ describe("rebunoFetch streaming", () => {
       rf("http://llm/v1/chat", { method: "POST", body: req }),
     );
     expect(resp.status).toBe(429);
-    expect(k.completed.length).toBe(1); // the error response was recorded as the result
-    expect(k.deltas).toEqual([]); // nothing to tee on an error
+    expect(k.completed.length).toBe(1);
+    expect(k.deltas).toEqual([]);
   });
 });

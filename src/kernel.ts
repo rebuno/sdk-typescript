@@ -40,7 +40,6 @@ export interface DispatchLease {
   readonly timeoutMs: number;
 }
 
-/** Three renewals per lease period, capped at {@link MAX_HEARTBEAT_INTERVAL_MS}. */
 export const heartbeatIntervalMs = (lease: DispatchLease): number =>
   Math.min(lease.timeoutMs / 3, MAX_HEARTBEAT_INTERVAL_MS);
 
@@ -107,7 +106,7 @@ export class KernelClient {
     } finally {
       clearTimeout(timer);
     }
-    if (resp.status >= 400) throw await errorFromResp(resp);
+    if (resp.status >= 400) throw await errorFromResponse(resp);
     return resp;
   }
 
@@ -232,22 +231,4 @@ export class KernelClient {
       leaseHeaders(lease),
     );
   }
-}
-
-async function errorFromResp(resp: Response): Promise<Error> {
-  const text = await resp.text();
-  let data: Record<string, unknown> = {};
-  try {
-    data = JSON.parse(text) as Record<string, unknown>;
-  } catch {
-    /* non-JSON */
-  }
-  const code = (data.code as string) ?? "internal_error";
-  const message = (data.message as string) ?? (text || "request failed");
-  return errorFromResponse(
-    code,
-    message,
-    resp.status,
-    (data.rule_id as string) ?? "",
-  );
 }

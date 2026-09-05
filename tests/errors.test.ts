@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   APIError,
   Blocked,
+  ConflictError,
   errorFromResponse,
   ForbiddenError,
   NotFoundError,
@@ -16,38 +17,54 @@ import {
   ValidationError,
 } from "../src/errors.js";
 
+const envelope = (status: number, body: Record<string, unknown>) =>
+  new Response(JSON.stringify(body), { status });
+
 describe("errorFromResponse", () => {
-  it("maps policy_denied to PolicyError with ruleId", () => {
-    const e = errorFromResponse("policy_denied", "nope", 403, "rule-7");
+  it.each([
+    [400, "validation_error", ValidationError],
+    [401, "unauthorized", UnauthorizedError],
+    [403, "forbidden", ForbiddenError],
+    [404, "not_found", NotFoundError],
+    [409, "conflict", ConflictError],
+  ])("maps %i %s", async (status, code, cls) => {
+    const e = await errorFromResponse(envelope(status, { code, message: "x" }));
+    expect(e).toBeInstanceOf(cls);
+    expect((e as APIError).code).toBe(code);
+    expect((e as APIError).statusCode).toBe(status);
+  });
+
+  it("maps policy_denied to PolicyError with ruleId", async () => {
+    const e = await errorFromResponse(
+      envelope(403, { code: "policy_denied", message: "nope", rule_id: "r1" }),
+    );
     expect(e).toBeInstanceOf(PolicyError);
-    expect((e as PolicyError).ruleId).toBe("rule-7");
-    expect((e as PolicyError).code).toBe("policy_denied");
+    expect((e as PolicyError).ruleId).toBe("r1");
   });
-  it("maps not_found to NotFoundError", () => {
-    expect(errorFromResponse("not_found", "x", 404)).toBeInstanceOf(
-      NotFoundError,
+
+  it("maps execution_terminal to its control-flow error", async () => {
+    const e = await errorFromResponse(
+      envelope(409, { code: "execution_terminal", message: "gone" }),
     );
+    expect(e).toBeInstanceOf(Terminated);
   });
-  it("maps validation_error to ValidationError", () => {
-    expect(errorFromResponse("validation_error", "x", 400)).toBeInstanceOf(
-      ValidationError,
+
+  it("falls back to APIError for unknown codes", async () => {
+    const e = await errorFromResponse(
+      envelope(500, { code: "something_new", message: "weird" }),
     );
-  });
-  it("maps unauthorized to UnauthorizedError", () => {
-    expect(errorFromResponse("unauthorized", "x", 401)).toBeInstanceOf(
-      UnauthorizedError,
-    );
-  });
-  it("maps forbidden to ForbiddenError", () => {
-    const e = errorFromResponse("forbidden", "not an approver", 403);
-    expect(e).toBeInstanceOf(ForbiddenError);
-    expect((e as ForbiddenError).code).toBe("forbidden");
-    expect((e as ForbiddenError).statusCode).toBe(403);
-  });
-  it("falls back to APIError for unknown codes", () => {
-    const e = errorFromResponse("weird", "x", 500);
     expect(e).toBeInstanceOf(APIError);
-    expect((e as APIError).code).toBe("weird");
+    expect(e).not.toBeInstanceOf(NotFoundError);
+    expect((e as APIError).code).toBe("something_new");
+  });
+
+  it("falls back to the body without an envelope", async () => {
+    const e = await errorFromResponse(
+      new Response("upstream is down", { status: 502 }),
+    );
+    expect(e).toBeInstanceOf(APIError);
+    expect((e as APIError).code).toBe("internal_error");
+    expect(e.message).toBe("upstream is down");
   });
 });
 

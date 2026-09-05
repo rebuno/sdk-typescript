@@ -27,7 +27,7 @@ If you change public API surface or behavior, update it there.
 
 1. Fork the repo and create a branch from `main`.
 2. Make your changes. Add tests for new functionality.
-3. Run `pnpm lint:fix`, then make sure `pnpm test`, `pnpm typecheck`, and `pnpm lint` pass — CI runs those three.
+3. Run `pnpm format`, then make sure `pnpm test`, `pnpm typecheck`, and `pnpm lint` pass. CI runs those three.
 4. Open a pull request with a clear description of what changed and why.
 
 ## Reporting Issues
