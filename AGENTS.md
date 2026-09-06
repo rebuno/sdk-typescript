@@ -1,132 +1,64 @@
 # Working on the Rebuno TypeScript SDK
 
-This repository contains Rebuno's ESM-only Node.js SDK with no runtime
-dependencies. It hosts agents, routes effects through the kernel, and exposes a
-client for executions and approvals. The Go kernel owns durable state, policy
-decisions, and step identity. Read [CONTRIBUTING.md](CONTRIBUTING.md) for the
-contribution workflow.
-
-## Repository map
-
-| Path | Responsibility |
-| --- | --- |
-| `src/index.ts` | Public value and type exports. |
-| `src/agent.ts` | Webhook handling, Node server, dispatch tasks, handler lifecycle. |
-| `src/context.ts`, `src/execution.ts` | Ambient execution context, step decisions, replay, heartbeats. |
-| `src/kernel.ts`, `src/crypto.ts` | Signed agent requests, dispatch leases, HMAC helpers. |
-| `src/client.ts`, `src/types.ts`, `src/errors.ts` | Public client, wire-model conversion, SDK errors and refusal conversion. |
-| `src/tool.ts`, `src/step.ts`, `src/mcp.ts` | Durable tools, local steps, and MCP adapters. |
-| `src/fetch.ts` | LLM fetch interception, response recording, streaming, refusal responses. |
-| `tests/` | Vitest coverage; fake kernels and context helpers in `tests/helpers.ts`. |
-
-SDK documentation and examples live in the main Rebuno repository under
-`docs/sdk/typescript/` and `examples/typescript/`. The Python SDK and dashboard
-are separate repositories. Edit `src/`; `dist/` and `node_modules/` are generated
-output and installed dependencies.
+This is Rebuno's ESM-only Node.js SDK with no runtime dependencies. The Go kernel
+owns durable state, policy decisions, and step identity. Read
+[CONTRIBUTING.md](CONTRIBUTING.md) for setup and the contribution workflow.
 
 ## Development and validation
 
-Use Node 22+ and the pnpm version declared in `package.json`. The supported Node
-matrix is in [.github/workflows/ci.yml](.github/workflows/ci.yml). Run commands
-from this root:
+Use the Node and pnpm versions declared in `package.json` and CI. Install with
+`pnpm install --frozen-lockfile`. For TypeScript changes, run focused tests, then
+`pnpm test`, `pnpm typecheck`, and `pnpm lint`. Run `pnpm build` for changes to
+public exports, declarations, or build configuration. See the package scripts
+for other commands; keep the lockfile consistent with dependency changes.
 
-| Command | Purpose |
-| --- | --- |
-| `pnpm install --frozen-lockfile` | Install locked dependencies, matching CI. |
-| `pnpm test tests/execution.test.ts` | Example of focused tests; adjust to the affected files. |
-| `pnpm test` | Run Vitest once. |
-| `pnpm test:watch` | Run Vitest in watch mode while iterating. |
-| `pnpm typecheck` | Check source types with `tsc --noEmit`. |
-| `pnpm lint` | Run Biome checks. |
-| `pnpm format` | Apply Biome formatting and fixes. |
-| `pnpm build` | Bundle ESM with tsup and emit declarations with TypeScript. |
+Reuse fake kernels and injected fetch implementations for unit tests; clean up
+timers, servers, and mocks. For documentation-only changes, check paths,
+commands, and implementation consistency; runtime tests are unnecessary.
+Report checks that could not run and why.
 
-For TypeScript changes, run focused tests while iterating, then `pnpm test`,
-`pnpm typecheck`, and `pnpm lint` before handing off. Run `pnpm build` when
-changing public exports, declarations, or build configuration. Type checking
-includes `src/`; tests run through Vitest and are excluded from `tsconfig.json`.
-Scope formatting to changed files when unrelated edits are present. Keep
-`pnpm-lock.yaml` consistent with dependency changes.
+## SDK constraints
 
-Tests use fake kernels and injected fetch implementations, so the existing suite
-does not require a running kernel or live LLM provider. Reuse `tests/helpers.ts`
-and nearby request/stream helpers; clean up timers, servers, and mocks. For
-documentation-only changes, check paths, commands, and implementation
-consistency; runtime tests are unnecessary. Report checks that could not run
-and why.
+- Preserve ESM relative imports with `.js` suffixes, strict typing, useful generic
+  inference, and zero runtime dependencies. Keep public exports and snake_case
+  wire-to-camelCase SDK conversions aligned with API changes.
+- Submit effects before invoking their bodies. The kernel assigns step IDs and
+  occurrences; replay returns recorded outcomes without invoking the effect.
+  Preserve the `safe_to_retry` and `at_most_once` contracts.
+- Scope execution context and cancellation to each dispatch. Concurrent
+  executions must not share mutable dispatch state. Preserve abort propagation
+  when superseding handlers and clean up heartbeat timers on exit.
+- Sign exact request bytes, verify raw webhook bodies, and preserve dispatch ID
+  and attempt headers. Attempt ordering is scoped to a dispatch ID.
+- Keep suspension, termination, and lease loss distinct from effect failures.
+  Suspended or superseded handlers must not complete or fail the execution,
+  including when user code catches a control-flow exception.
+- Preserve framework-facing tool metadata and schemas. Keep streamed deltas
+  best-effort and response recording durable; test replay, consumer cancellation,
+  and midstream failure when changing interception.
 
-## SDK invariants
-
-- Submit effects before invoking their bodies. The kernel returns step IDs and
-  counts occurrences; keep that responsibility in the kernel. Replay returns
-  recorded results or errors without invoking the effect. Preserve the
-  `safe_to_retry` and `at_most_once` idempotency contracts.
-- Keep execution context scoped with `AsyncLocalStorage`. Concurrent executions
-  must not share mutable dispatch state. Preserve `AbortController` propagation
-  and lease checks when superseding a handler; stop heartbeat timers when the
-  dispatch ends and keep the event loop responsive.
-- Sign the exact request bytes sent to the kernel and verify webhook signatures
-  against the raw body. Preserve dispatch ID and attempt headers on durable
-  mutations and heartbeats. Attempt ordering is scoped to a dispatch ID.
-- Preserve `Blocked`, `Terminated`, and `LeaseSuperseded` as control-flow signals.
-  Suspended or superseded handlers must not complete or fail the execution.
-  Keep policy refusals, rate limits, tool failures, and transport errors distinct
-  through tool wrappers and provider-error conversion.
-- Tools and local steps require an active execution. LLM fetch interception
-  passes requests through when there is no execution context or eligible JSON
-  body. Preserve these boundaries and the injectable fetch interface.
-- Preserve tool names, schemas, callable metadata, and recorded arguments when
-  changing tool or MCP wrappers; framework integrations depend on them.
-- Keep streamed deltas best-effort and the recorded response durable. Cover
-  stream completion, consumer cancellation, midstream failure, and UTF-8 chunk
-  boundaries when changing fetch interception. Replay must reconstruct the
-  recorded HTTP status, content type, and body without calling the provider.
-
-## Public API and documentation
-
-Preserve ESM imports with `.js` suffixes for relative source imports, explicit
-type exports, and strict TypeScript checking. Keep runtime dependencies at zero;
-use the existing Node and web platform APIs and callable adapter seams.
-
-Update `src/index.ts` when the public surface changes and preserve useful generic
-inference for tool arguments and results. Keep snake_case wire fields and
-camelCase SDK fields mapped in `src/types.ts`. Do not expose raw wire objects
-where the public API promises parsed SDK types.
-
-Add focused regression coverage for affected behavior, including replay,
-suspension, stale leases, or concurrent executions where relevant. Check the
-kernel's `/v0` protocol and the Python SDK when changing shared semantics; flag
-any coordinated changes they need.
-
-Update the [TypeScript SDK documentation](https://github.com/rebuno/rebuno/tree/main/docs/sdk/typescript)
-and affected examples in the main repository when public API or behavior changes.
-In a sibling checkout these are under `../rebuno/docs/sdk/typescript/` and
-`../rebuno/examples/typescript/`. Keep the README example and relevant guidance
-under `../rebuno/skills/rebuno/references/` consistent with those changes.
+Check the kernel protocol and Python SDK when changing shared semantics.
+Update the [TypeScript SDK docs](https://github.com/rebuno/rebuno/tree/main/docs/sdk/typescript),
+examples, and relevant agent-building guidance in the main Rebuno repository
+with public behavior changes. These are available in `../rebuno/` when using
+sibling checkouts.
 
 ## Comments, tests, and documentation style
 
-Write repository content for someone reading the finished system with no access
-to the task discussion. Changes should read as a natural part of the codebase.
+Write for someone reading the finished system with no access to the task
+conversation. Changes should read as a natural part of the codebase.
 
-- Keep comments and docstrings concise. Explain non-obvious intent, invariants,
-  or constraints when the code cannot express them clearly. Omit comments that
-  restate the code or announce an edit.
-- Keep conversation references, review replies, task instructions, and abandoned
-  approaches out of code, tests, and documentation. Put implementation history
-  and change rationale in PR descriptions or commit messages.
-- Describe behavior directly in the present tense. Avoid change-relative wording
-  such as "now", "new", "previously", "we changed", or "X instead of Y" when it
-  only makes sense in the context of the change. Explain a comparison only when
-  it helps the reader understand a lasting distinction or compatibility rule.
-- Update existing documentation and examples in place. Integrate the final
-  behavior into the relevant section; avoid appended fix notes, repeated caveats,
-  and explanations of superseded designs. Release notes and migration guides
-  can describe changes over time when that is their purpose.
-- Name tests for the behavior or invariant they verify. Keep assertions focused
-  on meaningful outcomes and failure modes. Preserve useful regression coverage;
-  avoid redundant tests, assertions that merely mirror implementation details,
-  and test commentary that recounts the debugging session.
-- Review the diff for wording that depends on knowing the conversation or the
-  previous patch. Remove it or rewrite it as a standalone explanation of the
-  current system.
+- Keep comments and docstrings sparse and concise. Explain non-obvious intent,
+  invariants, or constraints; omit restatements of code and announcements of edits.
+- Keep conversation references, review replies, and abandoned approaches out of
+  source, tests, and docs. Put change history in PRs, commits, release notes, or
+  migration guides when relevant.
+- Describe current behavior directly in the present tense. Avoid change-relative
+  wording such as "now", "previously", or "X instead of Y" unless it explains a
+  lasting distinction or compatibility rule.
+- Update existing documentation and examples in place. Avoid appended fix notes
+  and repeated caveats. Review additions for wording that depends on the task
+  discussion or previous patch.
+- Add focused regression tests for meaningful behavior and failure modes. Name
+  tests for the behavior they verify; avoid redundant coverage, assertions that
+  mirror implementation details, and commentary about the debugging session.
