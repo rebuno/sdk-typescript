@@ -40,3 +40,26 @@ export async function verifySignature(
   const expected = await signBody(secret, body);
   return timingSafeEqual(header, expected);
 }
+
+export async function signRequest(
+  secret: string,
+  method: string,
+  target: string,
+  body: Uint8Array,
+  headers: Record<string, string>,
+): Promise<string> {
+  const fields = [
+    "rebuno-request-v1",
+    method,
+    target,
+    headers["Rebuno-Timestamp"] ?? "",
+    headers["Rebuno-Dispatch-Id"] ?? "",
+    headers["Rebuno-Dispatch-Attempt"] ?? "",
+  ];
+  const prefix = new TextEncoder().encode(`${fields.join("\n")}\n`);
+  const message = new Uint8Array(prefix.length + body.length);
+  message.set(prefix);
+  message.set(body, prefix.length);
+  const key = await hmacKey(secret);
+  return `v1=${toHex(await crypto.subtle.sign("HMAC", key, message))}`;
+}

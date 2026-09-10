@@ -1,4 +1,4 @@
-import { signBody } from "./crypto.js";
+import { signRequest } from "./crypto.js";
 import {
   errorFromResponse,
   LeaseSuperseded,
@@ -88,14 +88,23 @@ export class KernelClient {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "Rebuno-Agent-Id": this.agentId,
-      "Rebuno-Signature": await signBody(this.secret, body),
+      "Rebuno-Timestamp": String(Math.floor(Date.now() / 1000)),
       ...extra,
     };
+    const url = new URL(this.baseUrl + path);
+    headers["Rebuno-Signature"] = await signRequest(
+      this.secret,
+      method,
+      url.pathname + url.search,
+      body,
+      headers,
+    );
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), this.timeout);
     let resp: Response;
     try {
-      resp = await this.fetchImpl(this.baseUrl + path, {
+      resp = await this.fetchImpl(url.href, {
+        redirect: "manual",
         method,
         headers,
         body: method === "GET" ? undefined : (body as BodyInit),
@@ -106,7 +115,7 @@ export class KernelClient {
     } finally {
       clearTimeout(timer);
     }
-    if (resp.status >= 400) throw await errorFromResponse(resp);
+    if (resp.status >= 300) throw await errorFromResponse(resp);
     return resp;
   }
 

@@ -26,7 +26,7 @@ describe("KernelClient", () => {
       expect(url).toBe("http://kernel/v0/executions/e1");
       const headers = init.headers as Record<string, string>;
       expect(headers["Rebuno-Agent-Id"]).toBe("agent-1");
-      expect(headers["Rebuno-Signature"]).toMatch(/^sha256=/);
+      expect(headers["Rebuno-Signature"]).toMatch(/^v1=/);
       return new Response(JSON.stringify({ id: "e1", status: "running" }), {
         status: 200,
       });
@@ -141,7 +141,7 @@ describe("KernelClient", () => {
       );
       expect(
         (init.headers as Record<string, string>)["Rebuno-Signature"],
-      ).toMatch(/^sha256=/);
+      ).toMatch(/^v1=/);
       return new Response("", { status: 200 });
     });
     const k = new KernelClient(opts(f));
