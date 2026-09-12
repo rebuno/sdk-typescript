@@ -36,6 +36,7 @@ export interface StepDecision {
   error: unknown;
   approvalId: string | null;
   reason: string;
+  ruleId: string;
 }
 
 export interface Event {
@@ -95,6 +96,7 @@ export function parseStepDecision(r: Raw): StepDecision {
     error: r.error ?? null,
     approvalId: (r.approval_id ?? null) as string | null,
     reason: str(r.reason),
+    ruleId: str(r.rule_id),
   };
 }
 

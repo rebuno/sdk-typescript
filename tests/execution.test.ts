@@ -115,12 +115,13 @@ describe("invokeTool", () => {
         error: null,
         approvalId: null,
         reason: "no",
+        ruleId: "r1",
       }),
     });
     const ctx = ctxWith(kernel);
-    await expect(
-      ctx.invokeTool("t", {}, { run: async () => 1 }),
-    ).rejects.toBeInstanceOf(PolicyError);
+    const call = ctx.invokeTool("t", {}, { run: async () => 1 });
+    await expect(call).rejects.toBeInstanceOf(PolicyError);
+    await expect(call).rejects.toMatchObject({ ruleId: "r1" });
   });
 
   it("maps blocked decision to Blocked", async () => {
