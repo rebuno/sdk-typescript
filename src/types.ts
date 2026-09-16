@@ -13,6 +13,7 @@ export interface Execution {
   status: ExecutionStatus;
   output: unknown;
   failureReason: string;
+  concurrencyKey: string;
 }
 
 export interface Step {
@@ -69,6 +70,7 @@ export function parseExecution(r: Raw): Execution {
     status: str(r.status, "pending") as ExecutionStatus,
     output: r.output ?? null,
     failureReason: str(r.failure_reason),
+    concurrencyKey: str(r.concurrency_key),
   };
 }
 
