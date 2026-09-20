@@ -36,14 +36,14 @@ instead of running a second time.
 
 ## Documentation
 
-- [Getting started](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/getting-started.md): install, configuration, the dispatch loop, and a complete example.
-- [Agents](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/agents.md): the `Agent` host, input validation, `serve` vs `fetch`, dispatch and resume, lifecycle.
-- [Tools](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/tools.md): `defineTool`, `wrapTool`, idempotency, blocking work, and wrapping MCP tools.
-- [LLM calls](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/llm-calls.md): `rebunoFetch` and `createRebunoFetch`.
-- [Steps](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/steps.md): `step()` for durable local work.
-- [Clients](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/client.md): creating and inspecting executions, and approvals.
-- [Errors](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/errors.md): the error class hierarchy.
-- [How it works](https://github.com/rebuno/rebuno/blob/main/docs/sdk/typescript/internals.md): step identity, replay, heartbeats, and the kernel protocol.
+- [Getting started](https://docs.rebuno.io/sdk/typescript/getting-started): install, configuration, the dispatch loop, and a complete example.
+- [Agents](https://docs.rebuno.io/sdk/typescript/agents): the `Agent` host, input validation, `serve` vs `fetch`, dispatch and resume, lifecycle.
+- [Tools](https://docs.rebuno.io/sdk/typescript/tools): `defineTool`, `wrapTool`, idempotency, blocking work, and wrapping MCP tools.
+- [LLM calls](https://docs.rebuno.io/sdk/typescript/llm-calls): `rebunoFetch` and `createRebunoFetch`.
+- [Steps](https://docs.rebuno.io/sdk/typescript/steps): `step()` for durable local work.
+- [Clients](https://docs.rebuno.io/sdk/typescript/client): creating and inspecting executions, and approvals.
+- [Errors](https://docs.rebuno.io/sdk/typescript/errors): the error class hierarchy.
+- [How it works](https://docs.rebuno.io/sdk/typescript/internals): step identity, replay, heartbeats, and the kernel protocol.
 
 ## License
 
