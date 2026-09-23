@@ -199,7 +199,7 @@ export class ExecutionContext {
     data: string,
   ): Promise<void> {
     try {
-      await this.kernel.streamDelta(this.id, stepId, seq, data);
+      await this.kernel.streamDelta(this.id, stepId, seq, data, this.lease);
     } catch {
       /* best effort */
     }

@@ -198,11 +198,13 @@ export class KernelClient {
     stepId: string,
     seq: number,
     data: string,
+    lease: DispatchLease,
   ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/steps/${stepId}/stream`,
       enc(JSON.stringify({ seq, data })),
+      leaseHeaders(lease),
     );
   }
 

@@ -133,19 +133,20 @@ describe("KernelClient", () => {
     );
   });
 
-  it("streamDelta posts seq and data to the stream endpoint", async () => {
+  it("streamDelta posts seq and data under the lease", async () => {
     const f = fakeFetch((url, init) => {
       expect(url).toBe("http://kernel/v0/executions/e1/steps/sid123/stream");
       expect(new TextDecoder().decode(init.body as Uint8Array)).toBe(
         '{"seq":4,"data":"tok"}',
       );
-      expect(
-        (init.headers as Record<string, string>)["Rebuno-Signature"],
-      ).toMatch(/^v1=/);
+      const headers = init.headers as Record<string, string>;
+      expect(headers["Rebuno-Signature"]).toMatch(/^v1=/);
+      expect(headers["Rebuno-Dispatch-Id"]).toBe("d1");
+      expect(headers["Rebuno-Dispatch-Attempt"]).toBe("3");
       return new Response("", { status: 200 });
     });
     const k = new KernelClient(opts(f));
-    await k.streamDelta("e1", "sid123", 4, "tok");
+    await k.streamDelta("e1", "sid123", 4, "tok", LEASE);
     expect(f).toHaveBeenCalledOnce();
   });
 
