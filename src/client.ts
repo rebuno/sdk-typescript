@@ -77,11 +77,13 @@ export class Client {
   async create(
     agentId: string,
     input?: unknown,
-    opts: { session?: string } = {},
+    opts: { session?: string; parentExecutionId?: string } = {},
   ): Promise<Execution> {
     const body: Record<string, unknown> = { agent_id: agentId };
     if (input !== undefined) body.input = input;
     if (opts.session) body.session = opts.session;
+    if (opts.parentExecutionId)
+      body.parent_execution_id = opts.parentExecutionId;
     const r = await this.request("POST", "/v0/executions", { body });
     return parseExecution(await r.json());
   }
@@ -109,6 +111,19 @@ export class Client {
 
   async cancel(executionId: string): Promise<void> {
     await this.request("POST", `/v0/executions/${executionId}/cancel`);
+  }
+
+  async fork(
+    executionId: string,
+    opts: { atSeq: number; session?: string; policyBundle?: string },
+  ): Promise<Execution> {
+    const body: Record<string, unknown> = { at_seq: opts.atSeq };
+    if (opts.session) body.session = opts.session;
+    if (opts.policyBundle) body.policy_bundle = opts.policyBundle;
+    const r = await this.request("POST", `/v0/executions/${executionId}/fork`, {
+      body,
+    });
+    return parseExecution(await r.json());
   }
 
   async listSteps(

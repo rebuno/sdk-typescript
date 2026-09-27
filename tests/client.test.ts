@@ -25,6 +25,20 @@ describe("Client", () => {
     expect(e.id).toBe("e1");
   });
 
+  it("fork posts the fork point and parses the fork", async () => {
+    const f = fakeFetch((url, init) => {
+      expect(url).toBe("http://k/v0/executions/e1/fork");
+      expect(JSON.parse(init.body)).toEqual({ at_seq: 7, session: "retry" });
+      return new Response(
+        JSON.stringify({ id: "e2", forked_from: "e1", fork_seq: 7 }),
+        { status: 201 },
+      );
+    });
+    const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
+    const fork = await c.fork("e1", { atSeq: 7, session: "retry" });
+    expect([fork.forkedFrom, fork.forkSeq]).toEqual(["e1", 7]);
+  });
+
   it("get maps 404 to NotFoundError", async () => {
     const f = fakeFetch(
       () =>

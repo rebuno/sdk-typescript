@@ -15,6 +15,8 @@ export interface Execution {
   failureReason: string;
   session: string;
   parentExecutionId: string | null;
+  forkedFrom: string | null;
+  forkSeq: number;
 }
 
 export interface Step {
@@ -74,6 +76,8 @@ export function parseExecution(r: Raw): Execution {
     session: str(r.session),
     parentExecutionId:
       typeof r.parent_execution_id === "string" ? r.parent_execution_id : null,
+    forkedFrom: typeof r.forked_from === "string" ? r.forked_from : null,
+    forkSeq: num(r.fork_seq),
   };
 }
 
