@@ -11,6 +11,10 @@ export function getExecution(): ExecutionContext | null {
   return storage.getStore() ?? null;
 }
 
+export function previous<T = unknown>(): Promise<T | null> {
+  return execution().previous() as Promise<T | null>;
+}
+
 export function execution(): ExecutionContext {
   const ctx = storage.getStore();
   if (!ctx)

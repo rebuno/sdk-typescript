@@ -9,7 +9,7 @@ import {
   Terminated,
   ToolError,
 } from "./errors.js";
-import { ExecutionContext } from "./execution.js";
+import { ExecutionContext, Result } from "./execution.js";
 import { type DispatchLease, type FetchFn, KernelClient } from "./kernel.js";
 
 /** Minimal Standard Schema v1 shape we consume for optional input validation. */
@@ -227,7 +227,16 @@ export class Agent<TInput = any, TOutput = unknown> {
       } finally {
         stopLease();
       }
-      await kernel.completeExecution(executionId, output, lease);
+      if (output instanceof Result) {
+        await kernel.completeExecution(
+          executionId,
+          output.output,
+          lease,
+          output.state,
+        );
+      } else {
+        await kernel.completeExecution(executionId, output, lease);
+      }
     });
   }
 

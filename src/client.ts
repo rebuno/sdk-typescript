@@ -77,11 +77,11 @@ export class Client {
   async create(
     agentId: string,
     input?: unknown,
-    opts: { concurrencyKey?: string } = {},
+    opts: { session?: string } = {},
   ): Promise<Execution> {
     const body: Record<string, unknown> = { agent_id: agentId };
     if (input !== undefined) body.input = input;
-    if (opts.concurrencyKey) body.concurrency_key = opts.concurrencyKey;
+    if (opts.session) body.session = opts.session;
     const r = await this.request("POST", "/v0/executions", { body });
     return parseExecution(await r.json());
   }

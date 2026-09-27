@@ -17,6 +17,16 @@ import type { StepDecision } from "./types.js";
 type Idempotency = "safe_to_retry" | "at_most_once";
 type StepKind = "tool_call" | "llm_call" | "local";
 
+export class Result<TOutput = unknown, TState = unknown> {
+  readonly output: TOutput;
+  readonly state?: TState;
+
+  constructor(o: { output: TOutput; state?: TState }) {
+    this.output = o.output;
+    this.state = o.state;
+  }
+}
+
 export interface ExecutionContextOptions {
   kernel: KernelClient;
   executionId: string;
@@ -50,6 +60,10 @@ export class ExecutionContext {
     this.input = o.input;
     this.ctrl = o.controller ?? new AbortController();
     this.status = o.status ?? "running";
+  }
+
+  previous(): Promise<unknown> {
+    return this.kernel.previousState(this.id);
   }
 
   /** Aborted once a newer dispatch for this execution supersedes this run. */

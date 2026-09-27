@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../src/agent.js";
-import { execution } from "../src/context.js";
+import { execution, previous } from "../src/context.js";
 import { signBody } from "../src/crypto.js";
 import { ToolError } from "../src/errors.js";
+import { Result } from "../src/execution.js";
 import { createRebunoFetch } from "../src/fetch.js";
 import { step } from "../src/step.js";
 import { defineTool } from "../src/tool.js";
@@ -73,6 +74,45 @@ async function runDispatch(fetch: any, process: any, inputSchema?: any) {
 
 const failure = (calls: { url: string; body: any }[]) =>
   calls.find((c) => c.url.endsWith("/v0/executions/e1/fail"))?.body.error;
+
+const completion = (calls: { url: string; body: any }[]) =>
+  calls.find((c) => c.url.endsWith("/v0/executions/e1/complete"))?.body;
+
+describe("sessions", () => {
+  it("completes a Result with its output and session state", async () => {
+    const { f, calls } = kernelFetch({
+      id: "e1",
+      status: "running",
+      input: {},
+    });
+    await runDispatch(
+      f,
+      async () => new Result({ output: { answer: 1 }, state: { turns: 1 } }),
+    );
+    expect(completion(calls)).toEqual({
+      output: { answer: 1 },
+      state: { turns: 1 },
+    });
+  });
+
+  it("returns the parent state from previous()", async () => {
+    const { f: kernel, calls } = kernelFetch({
+      id: "e1",
+      status: "running",
+      input: {},
+    });
+    const f = vi.fn(async (url: string, init: any) =>
+      url.endsWith("/previous")
+        ? new Response(JSON.stringify({ state: { turns: ["earlier"] } }))
+        : kernel(url, init),
+    );
+    await runDispatch(
+      f,
+      async () => (await previous<{ turns: string[] }>())?.turns,
+    );
+    expect(completion(calls)).toEqual({ output: ["earlier"] });
+  });
+});
 
 describe("Agent.fetch", () => {
   it("rejects a bad signature with 401", async () => {

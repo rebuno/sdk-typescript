@@ -124,6 +124,16 @@ export class KernelClient {
     return parseExecution(await r.json());
   }
 
+  async previousState(executionId: string): Promise<unknown> {
+    const r = await this.send(
+      "GET",
+      `/v0/executions/${executionId}/previous`,
+      EMPTY,
+    );
+    const body = (await r.json()) as { state?: unknown };
+    return body.state ?? null;
+  }
+
   async getStep(executionId: string, stepId: string): Promise<Step | null> {
     try {
       const r = await this.send(
@@ -221,11 +231,14 @@ export class KernelClient {
     executionId: string,
     output: unknown,
     lease: DispatchLease,
+    state?: unknown,
   ): Promise<void> {
+    const body =
+      state === undefined || state === null ? { output } : { output, state };
     await this.send(
       "POST",
       `/v0/executions/${executionId}/complete`,
-      enc(JSON.stringify({ output })),
+      enc(JSON.stringify(body)),
       leaseHeaders(lease),
     );
   }

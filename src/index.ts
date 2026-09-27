@@ -2,7 +2,7 @@ export type { AgentOptions, ProcessFn, ServeOptions } from "./agent.js";
 export { Agent } from "./agent.js";
 export type { ClientOptions } from "./client.js";
 export { Client } from "./client.js";
-export { execution } from "./context.js";
+export { execution, previous } from "./context.js";
 export {
   APIError,
   Blocked,
@@ -21,7 +21,7 @@ export {
   UnauthorizedError,
   ValidationError,
 } from "./errors.js";
-export { ExecutionContext } from "./execution.js";
+export { ExecutionContext, Result } from "./execution.js";
 export type { RebunoFetchOptions } from "./fetch.js";
 export { createRebunoFetch, rebunoFetch } from "./fetch.js";
 export type { WrapMcpOptions } from "./mcp.js";
