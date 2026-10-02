@@ -12,6 +12,7 @@ export function fakeKernel(decision: Record<string, unknown> = {}) {
       approvalId: null,
       reason: "",
       ruleId: "",
+      resources: [],
       ...decision,
     })),
     completeStep: vi.fn(async () => {}),

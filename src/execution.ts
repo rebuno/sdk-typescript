@@ -8,11 +8,14 @@ import {
   ToolError,
 } from "./errors.js";
 import {
+  type CheckpointRecords,
   type DispatchLease,
   heartbeatIntervalMs,
   type KernelClient,
+  type ResourceRegistration,
 } from "./kernel.js";
-import type { StepDecision } from "./types.js";
+import type { ResourceOptions } from "./resource.js";
+import type { StepDecision, StepResource } from "./types.js";
 
 type Idempotency = "safe_to_retry" | "at_most_once";
 type StepKind = "tool_call" | "llm_call" | "local";
@@ -49,6 +52,15 @@ export class ExecutionContext {
   private kernel: KernelClient;
   private lease: DispatchLease;
   private ctrl: AbortController;
+  private resources = new Map<
+    string,
+    {
+      handle: unknown;
+      checkpoint: () => string | Promise<string>;
+      registration: ResourceRegistration;
+    }
+  >();
+  private effects: Promise<void> = Promise.resolve();
 
   constructor(o: ExecutionContextOptions) {
     this.kernel = o.kernel;
@@ -71,6 +83,135 @@ export class ExecutionContext {
     return this.ctrl.signal;
   }
 
+  private exclusive<T>(run: () => Promise<T>, needed = true): Promise<T> {
+    if (!needed) return run();
+    const result = this.effects.then(run);
+    this.effects = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
+  }
+
+  async registerResource<THandle, TBinding>(
+    key: string,
+    opts: ResourceOptions<THandle, TBinding>,
+  ): Promise<THandle> {
+    return this.exclusive(async () => {
+      const cached = this.resources.get(key);
+      if (cached) return cached.handle as THandle;
+      const { driver, checkpoints } = opts;
+      const everySteps = checkpoints?.everySteps ?? 1;
+      if (!Number.isInteger(everySteps) || everySteps < 1)
+        throw new RangeError("everySteps must be a positive integer");
+      const registration = {
+        key,
+        driverId: driver.driverId,
+        configuration: driver.configuration ?? null,
+        coverageReuse: driver.coverageReuse ?? false,
+        everySteps,
+        onCompletion: checkpoints?.onCompletion ?? true,
+      };
+      const view = await this.kernel.registerResource(
+        this.id,
+        registration,
+        this.lease,
+      );
+      let handle: THandle;
+      if (view.binding !== null) {
+        handle = await driver.open(view.binding as TBinding);
+      } else {
+        const created = await driver.create(view.checkpointRef || undefined);
+        handle = created.handle;
+        await this.kernel.bindResource(
+          this.id,
+          key,
+          created.binding,
+          this.lease,
+        );
+      }
+      this.resources.set(key, {
+        handle,
+        checkpoint: () => driver.checkpoint(handle),
+        registration,
+      });
+      if (!view.covered) {
+        const records = await this.capture([
+          { key, generation: view.generation, due: true },
+        ]);
+        await this.kernel.publishCheckpoints(this.id, records, this.lease);
+      }
+      return handle;
+    });
+  }
+
+  private async capture(due: StepResource[]): Promise<CheckpointRecords> {
+    const records: CheckpointRecords = {};
+    for (const r of due) {
+      try {
+        const managed = this.resources.get(r.key);
+        if (!managed)
+          throw new RebunoError("resource() was not called in this dispatch");
+        const checkpointRef = await managed.checkpoint();
+        records.captures ??= [];
+        records.captures.push({
+          key: r.key,
+          generation: r.generation,
+          checkpointRef,
+        });
+      } catch (e) {
+        if (
+          e instanceof Blocked ||
+          e instanceof Terminated ||
+          e instanceof PolicyError ||
+          e instanceof RateLimited ||
+          e instanceof LeaseSuperseded
+        )
+          throw e;
+        console.warn(`rebuno: checkpoint of resource '${r.key}' failed`, e);
+        records.captureFailures ??= [];
+        records.captureFailures.push({
+          key: r.key,
+          generation: r.generation,
+          error: String(e instanceof Error ? e.message || e.name : e),
+        });
+      }
+    }
+    return records;
+  }
+
+  async checkpointOnCompletion(): Promise<void> {
+    if (!this.resources.size) return;
+    try {
+      await this.exclusive(async () => {
+        const due: StepResource[] = [];
+        for (const { registration } of this.resources.values()) {
+          const view = await this.kernel.registerResource(
+            this.id,
+            registration,
+            this.lease,
+          );
+          if (view.onCompletion && !view.covered)
+            due.push({ key: view.key, generation: view.generation, due: true });
+        }
+        if (due.length) {
+          const records = await this.capture(due);
+          await this.kernel.publishCheckpoints(this.id, records, this.lease);
+        }
+      });
+    } catch (e) {
+      if (
+        e instanceof Blocked ||
+        e instanceof Terminated ||
+        e instanceof PolicyError ||
+        e instanceof RateLimited ||
+        e instanceof LeaseSuperseded
+      )
+        throw e;
+      console.warn("rebuno: checkpoint on completion failed", e);
+    }
+  }
+
   /**
    * The kernel counts occurrences of this effect under its own lock, so
    * concurrent identical calls get distinct step ids without coordination here.
@@ -80,6 +221,7 @@ export class ExecutionContext {
     target: string;
     args: unknown;
     idempotency: string;
+    resources?: string[];
   }): Promise<{ stepId: string; dec: StepDecision }> {
     const dec = await this.kernel.submitStep(this.id, p, this.lease);
     return { stepId: dec.stepId, dec };
@@ -136,52 +278,58 @@ export class ExecutionContext {
       idempotency?: Idempotency;
       run?: () => Promise<unknown>;
       kind?: StepKind;
+      resources?: string[];
     } = {},
   ): Promise<unknown> {
-    const idempotency = opts.idempotency ?? "safe_to_retry";
-    const kind = opts.kind ?? "tool_call";
-    const { stepId, dec } = await this.submit({
-      kind,
-      target,
-      args,
-      idempotency,
-    });
+    return this.exclusive(async () => {
+      const { stepId, dec } = await this.submit({
+        kind: opts.kind ?? "tool_call",
+        target,
+        args,
+        idempotency: opts.idempotency ?? "safe_to_retry",
+        resources: opts.resources,
+      });
 
-    if (dec.decision === "replay") {
-      if (dec.error != null)
-        throw new ToolError(errorMessage(dec.error), {
+      if (dec.decision === "replay") {
+        if (dec.error != null)
+          throw new ToolError(errorMessage(dec.error), {
+            toolId: target,
+            stepId,
+          });
+        return dec.result;
+      }
+      this.raiseForDecision(dec);
+      const due = dec.resources.filter((r) => r.due);
+      let result: unknown;
+      try {
+        result = opts.run ? await opts.run() : null;
+      } catch (e) {
+        if (
+          e instanceof Blocked ||
+          e instanceof Terminated ||
+          e instanceof PolicyError ||
+          e instanceof RateLimited ||
+          e instanceof LeaseSuperseded
+        )
+          throw e;
+        const records = await this.capture(due);
+        await this.failStepQuietly(stepId, e, records);
+        if (e instanceof ToolError) throw e;
+        throw new ToolError(String(e instanceof Error ? e.message : e), {
           toolId: target,
           stepId,
         });
-      return dec.result;
-    }
-    this.raiseForDecision(dec);
-
-    if (!opts.run) {
-      await this.kernel.completeStep(this.id, stepId, null, this.lease);
-      return null;
-    }
-    let result: unknown;
-    try {
-      result = await opts.run();
-    } catch (e) {
-      if (
-        e instanceof Blocked ||
-        e instanceof Terminated ||
-        e instanceof PolicyError ||
-        e instanceof RateLimited ||
-        e instanceof LeaseSuperseded
-      )
-        throw e;
-      await this.failStepQuietly(stepId, e);
-      if (e instanceof ToolError) throw e;
-      throw new ToolError(String(e instanceof Error ? e.message : e), {
-        toolId: target,
+      }
+      const records = await this.capture(due);
+      await this.kernel.completeStep(
+        this.id,
         stepId,
-      });
-    }
-    await this.kernel.completeStep(this.id, stepId, result, this.lease);
-    return result;
+        result,
+        this.lease,
+        records,
+      );
+      return result;
+    }, this.resources.size > 0);
   }
 
   /** Submit an `llm_call` step. Returns `(stepId, decision)`: `proceed` (run the
@@ -223,13 +371,18 @@ export class ExecutionContext {
     await this.kernel.completeStep(this.id, stepId, result, this.lease);
   }
 
-  async failStepQuietly(stepId: string, error: unknown): Promise<void> {
+  async failStepQuietly(
+    stepId: string,
+    error: unknown,
+    records: CheckpointRecords = {},
+  ): Promise<void> {
     try {
       await this.kernel.failStep(
         this.id,
         stepId,
         { message: String(error instanceof Error ? error.message : error) },
         this.lease,
+        records,
       );
     } catch (e) {
       if (e instanceof LeaseSuperseded) throw e;

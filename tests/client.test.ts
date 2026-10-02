@@ -30,13 +30,29 @@ describe("Client", () => {
       expect(url).toBe("http://k/v0/executions/e1/fork");
       expect(JSON.parse(init.body)).toEqual({ at_seq: 7, session: "retry" });
       return new Response(
-        JSON.stringify({ id: "e2", forked_from: "e1", fork_seq: 7 }),
+        JSON.stringify({
+          id: "e2",
+          forked_from: "e1",
+          fork_seq: 7,
+          restoration: {
+            workspace: {
+              checkpoint_ref: "snap-1",
+              checkpoint_seq: 5,
+              covered: false,
+            },
+            database: { covered: false },
+          },
+        }),
         { status: 201 },
       );
     });
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     const fork = await c.fork("e1", { atSeq: 7, session: "retry" });
     expect([fork.forkedFrom, fork.forkSeq]).toEqual(["e1", 7]);
+    expect(fork.restoration).toEqual({
+      workspace: { checkpointRef: "snap-1", checkpointSeq: 5, covered: false },
+      database: { checkpointRef: "", checkpointSeq: 0, covered: false },
+    });
   });
 
   it("get maps 404 to NotFoundError", async () => {

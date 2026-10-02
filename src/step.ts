@@ -8,6 +8,7 @@ export async function step<T = unknown>(
   fn: (args: Record<string, unknown>) => T | Promise<T>,
   args: Record<string, unknown> = {},
   idempotency: Idempotency = "safe_to_retry",
+  resources?: string[],
 ): Promise<T> {
   const ctx = getExecution();
   if (!ctx)
@@ -16,6 +17,7 @@ export async function step<T = unknown>(
     );
   return (await ctx.invokeTool(name, args, {
     idempotency,
+    resources,
     kind: "local",
     run: async () => fn(args),
   })) as T;

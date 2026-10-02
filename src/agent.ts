@@ -193,6 +193,7 @@ export class Agent<TInput = any, TOutput = unknown> {
       const stopLease = ctx.startHeartbeat();
       try {
         output = await this.process!(input as TInput);
+        if (!ctx.suspension) await ctx.checkpointOnCompletion();
         if (ctx.suspension) throw ctx.suspension;
       } catch (e) {
         if (

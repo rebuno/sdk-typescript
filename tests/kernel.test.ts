@@ -20,6 +20,20 @@ const opts = (fetchImpl: any) => ({
   fetch: fetchImpl,
 });
 
+const REGISTRATION = {
+  key: "workspace",
+  driverId: "test.v1",
+  configuration: { template: "base" },
+  coverageReuse: true,
+  everySteps: 5,
+  onCompletion: false,
+};
+
+const CAPTURES = {
+  captures: [{ key: "workspace", generation: 4, checkpointRef: "snap-1" }],
+  captureFailures: [{ key: "database", generation: 2, error: "unavailable" }],
+};
+
 describe("KernelClient", () => {
   it("getExecution signs the request and parses the response", async () => {
     const f = fakeFetch((url, init) => {
@@ -41,10 +55,17 @@ describe("KernelClient", () => {
     const f = fakeFetch((url, init) => {
       expect(url).toBe("http://kernel/v0/executions/e1/steps");
       expect(new TextDecoder().decode(init.body as Uint8Array)).toBe(
-        '{"kind":"tool_call","target":"search","args":{"z":2,"a":1},"idempotency":"safe_to_retry"}',
+        '{"kind":"tool_call","target":"search","args":{"z":2,"a":1},"idempotency":"safe_to_retry","resources":[]}',
       );
       return new Response(
-        JSON.stringify({ decision: "proceed", step_id: "s9" }),
+        JSON.stringify({
+          decision: "proceed",
+          step_id: "s9",
+          resources: [
+            { key: "workspace", generation: 4, due: true },
+            { key: "database", generation: 2 },
+          ],
+        }),
         { status: 200 },
       );
     });
@@ -61,7 +82,126 @@ describe("KernelClient", () => {
     );
     expect(d.decision).toBe("proceed");
     expect(d.stepId).toBe("s9");
+    expect(d.resources).toEqual([
+      { key: "workspace", generation: 4, due: true },
+      { key: "database", generation: 2, due: false },
+    ]);
   });
+
+  it.each([undefined, [], ["workspace"]])(
+    "preserves resource declarations %j",
+    async (resources) => {
+      const f = fakeFetch((_url, init) => {
+        const body = JSON.parse(
+          new TextDecoder().decode(init.body as Uint8Array),
+        );
+        expect(body.resources).toEqual(resources ?? []);
+        return Response.json({ decision: "proceed", step_id: "s1" });
+      });
+      await new KernelClient(opts(f)).submitStep(
+        "e1",
+        {
+          kind: "tool_call",
+          target: "write",
+          args: {},
+          idempotency: "safe_to_retry",
+          resources,
+        },
+        LEASE,
+      );
+    },
+  );
+
+  it("registers a resource and parses its checkpoint state", async () => {
+    const f = fakeFetch((url, init) => {
+      expect(url).toBe("http://kernel/v0/executions/e1/resources");
+      expect(
+        JSON.parse(new TextDecoder().decode(init.body as Uint8Array)),
+      ).toEqual({
+        key: "workspace",
+        driver_id: "test.v1",
+        configuration: { template: "base" },
+        coverage_reuse: true,
+        every_steps: 5,
+        on_completion: false,
+      });
+      return Response.json({
+        key: "workspace",
+        generation: 4,
+        binding: { sandbox_id: "sbx" },
+        checkpoint_ref: "snap-1",
+        covered: true,
+        every_steps: 5,
+        on_completion: false,
+      });
+    });
+    expect(
+      await new KernelClient(opts(f)).registerResource(
+        "e1",
+        REGISTRATION,
+        LEASE,
+      ),
+    ).toEqual({
+      key: "workspace",
+      generation: 4,
+      binding: { sandbox_id: "sbx" },
+      checkpointRef: "snap-1",
+      covered: true,
+      everySteps: 5,
+      onCompletion: false,
+    });
+  });
+
+  it("binds the resource's JSON locator", async () => {
+    const f = fakeFetch((url, init) => {
+      expect(url).toBe(
+        "http://kernel/v0/executions/e1/resources/workspace/binding",
+      );
+      expect(
+        JSON.parse(new TextDecoder().decode(init.body as Uint8Array)),
+      ).toEqual({ binding: { id: "sbx" } });
+      return new Response(null);
+    });
+    await new KernelClient(opts(f)).bindResource(
+      "e1",
+      "workspace",
+      { id: "sbx" },
+      LEASE,
+    );
+  });
+
+  it.each(["complete", "fail", "checkpoints"])(
+    "sends capture metadata with %s",
+    async (action) => {
+      const f = fakeFetch((url, init) => {
+        expect(url).toBe(
+          `http://kernel/v0/executions/e1/${action === "checkpoints" ? "resources/checkpoints" : `steps/s1/${action}`}`,
+        );
+        expect(
+          JSON.parse(new TextDecoder().decode(init.body as Uint8Array)),
+        ).toEqual({
+          ...(action === "complete"
+            ? { result: "done" }
+            : action === "fail"
+              ? { error: { message: "failed" } }
+              : {}),
+          captures: [
+            { key: "workspace", generation: 4, checkpoint_ref: "snap-1" },
+          ],
+          capture_failures: [
+            { key: "database", generation: 2, error: "unavailable" },
+          ],
+        });
+        return new Response(null);
+      });
+      const k = new KernelClient(opts(f));
+      if (action === "complete")
+        await k.completeStep("e1", "s1", "done", LEASE, CAPTURES);
+      else if (action === "fail")
+        await k.failStep("e1", "s1", { message: "failed" }, LEASE, CAPTURES);
+      else await k.publishCheckpoints("e1", CAPTURES, LEASE);
+    },
+  );
 
   // The kernel fences every mutation on the attempt it was dispatched under, so
   // one that forgets the headers is refused rather than silently unfenced.
@@ -82,6 +222,19 @@ describe("KernelClient", () => {
     ],
     ["completeStep", (k: KernelClient) => k.completeStep("e1", "s1", 1, LEASE)],
     ["failStep", (k: KernelClient) => k.failStep("e1", "s1", {}, LEASE)],
+    [
+      "registerResource",
+      (k: KernelClient) => k.registerResource("e1", REGISTRATION, LEASE),
+    ],
+    [
+      "bindResource",
+      (k: KernelClient) =>
+        k.bindResource("e1", "workspace", { id: "sbx" }, LEASE),
+    ],
+    [
+      "publishCheckpoints",
+      (k: KernelClient) => k.publishCheckpoints("e1", CAPTURES, LEASE),
+    ],
     ["heartbeat", (k: KernelClient) => k.heartbeat("e1", LEASE)],
     [
       "completeExecution",

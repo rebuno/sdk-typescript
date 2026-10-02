@@ -6,6 +6,7 @@ export { execution, previous } from "./context.js";
 export {
   APIError,
   Blocked,
+  CheckpointUnavailable,
   ConflictError,
   ForbiddenError,
   failureReason,
@@ -26,6 +27,12 @@ export type { RebunoFetchOptions } from "./fetch.js";
 export { createRebunoFetch, rebunoFetch } from "./fetch.js";
 export type { WrapMcpOptions } from "./mcp.js";
 export { wrapMcpTool, wrapMcpTools } from "./mcp.js";
+export type {
+  CheckpointPolicy,
+  ResourceDriver,
+  ResourceOptions,
+} from "./resource.js";
+export { resource } from "./resource.js";
 export { step } from "./step.js";
 export type {
   DefineToolOptions,
@@ -39,6 +46,9 @@ export type {
   Event,
   Execution,
   ExecutionStatus,
+  Resource,
+  ResourceSelection,
   Step,
   StepDecision,
+  StepResource,
 } from "./types.js";

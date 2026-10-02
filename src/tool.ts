@@ -54,6 +54,7 @@ export interface DefineToolOptions<TArgs, TResult> {
   description?: string;
   inputSchema?: unknown;
   idempotency?: Idempotency;
+  resources?: string[];
   execute: (args: TArgs) => TResult | Promise<TResult>;
 }
 
@@ -76,6 +77,7 @@ export function defineTool<
       async () =>
         (await ctx.invokeTool(opts.name, args, {
           idempotency,
+          resources: opts.resources,
           run: async () => opts.execute(args),
         })) as TResult,
     );
@@ -94,6 +96,7 @@ export interface WrapToolOptions<TResult> {
   description?: string;
   inputSchema?: unknown;
   idempotency?: Idempotency;
+  resources?: string[];
   toResult?: (raw: unknown) => TResult;
   transformArgs?: (args: Record<string, unknown>) => Record<string, unknown>;
 }
@@ -122,6 +125,7 @@ export function wrapTool<TResult = unknown>(
       async () =>
         (await ctx.invokeTool(opts.name, args, {
           idempotency,
+          resources: opts.resources,
           run,
         })) as TResult,
     );

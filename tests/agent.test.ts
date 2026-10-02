@@ -2,9 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { Agent } from "../src/agent.js";
 import { execution, previous } from "../src/context.js";
 import { signBody } from "../src/crypto.js";
-import { ToolError } from "../src/errors.js";
+import {
+  CheckpointUnavailable,
+  LeaseSuperseded,
+  ToolError,
+} from "../src/errors.js";
 import { Result } from "../src/execution.js";
 import { createRebunoFetch } from "../src/fetch.js";
+import { resource } from "../src/resource.js";
 import { step } from "../src/step.js";
 import { defineTool } from "../src/tool.js";
 
@@ -429,5 +434,156 @@ describe("Agent suspension handling", () => {
       throw new Error("Error code: 403 - rebuno_refusal: denied");
     });
     expect(failure(calls)).toContain("denied");
+  });
+});
+
+describe("Agent resource checkpoints", () => {
+  function setup(decision = "proceed") {
+    const view = {
+      key: "workspace",
+      generation: 0,
+      covered: true,
+      every_steps: 5,
+      on_completion: true,
+    };
+    const { f: base, calls } = kernelFetch(
+      { id: "e1", status: "running", input: {} },
+      { decision, step_id: "s1" },
+    );
+    const checkpoints: any[] = [];
+    const order: string[] = [];
+    const f = vi.fn(async (url: string, init: any) => {
+      order.push(url);
+      if (url.endsWith("/resources")) return Response.json(view);
+      if (url.endsWith("/steps")) {
+        view.generation++;
+        view.covered = false;
+      }
+      if (url.endsWith("/resources/checkpoints")) {
+        checkpoints.push(JSON.parse(new TextDecoder().decode(init.body)));
+        return new Response(null);
+      }
+      return base(url, init);
+    });
+    const driver = {
+      driverId: "test.v1",
+      create: vi.fn(() => ({ handle: {}, binding: { id: "sbx" } })),
+      open: vi.fn(() => ({})),
+      checkpoint: vi.fn(() => "snapshot"),
+    };
+    return { f, calls, checkpoints, order, driver };
+  }
+
+  it.each([false, true])(
+    "captures before completing with captureFailure=%s",
+    async (captureFailure) => {
+      const k = setup();
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        if (captureFailure)
+          k.driver.checkpoint.mockImplementation(() => {
+            throw new Error("snapshot failed");
+          });
+        await runDispatch(k.f, async () => {
+          await resource("workspace", {
+            driver: k.driver,
+            checkpoints: { everySteps: 5 },
+          });
+          await step("write", () => "ok", {}, "safe_to_retry", ["workspace"]);
+          return new Result({ output: "done", state: { turns: 1 } });
+        });
+        expect(k.checkpoints).toEqual([
+          captureFailure
+            ? {
+                capture_failures: [
+                  { key: "workspace", generation: 1, error: "snapshot failed" },
+                ],
+              }
+            : {
+                captures: [
+                  {
+                    key: "workspace",
+                    generation: 1,
+                    checkpoint_ref: "snapshot",
+                  },
+                ],
+              },
+        ]);
+        expect(
+          k.order.indexOf(`${KERNEL}/v0/executions/e1/resources/checkpoints`),
+        ).toBeLessThan(k.order.indexOf(`${KERNEL}/v0/executions/e1/complete`));
+        expect(completion(k.calls)).toEqual({
+          output: "done",
+          state: { turns: 1 },
+        });
+      } finally {
+        warn.mockRestore();
+      }
+    },
+  );
+
+  it("does not capture or settle a handler that swallowed a blocked tool", async () => {
+    const k = setup("blocked");
+    await runDispatch(k.f, async () => {
+      await resource("workspace", { driver: k.driver });
+      try {
+        await step("write", () => "ok", {}, "safe_to_retry", ["workspace"]);
+      } catch {}
+      return "done";
+    });
+    expect(k.driver.checkpoint).not.toHaveBeenCalled();
+    expect(completion(k.calls)).toBeUndefined();
+    expect(failure(k.calls)).toBeUndefined();
+  });
+
+  it("does not capture on handler failure", async () => {
+    const k = setup();
+    await runDispatch(k.f, async () => {
+      await resource("workspace", { driver: k.driver });
+      await step(
+        "write",
+        () => {
+          throw new Error("partial write");
+        },
+        {},
+        "safe_to_retry",
+        ["workspace"],
+      );
+    });
+    expect(k.driver.checkpoint).not.toHaveBeenCalled();
+    expect(completion(k.calls)).toBeUndefined();
+    expect(failure(k.calls)).toContain("partial write");
+  });
+
+  it("leaves completion unwritten when the lease is lost during capture", async () => {
+    const k = setup();
+    k.driver.checkpoint.mockImplementation(() => {
+      throw new LeaseSuperseded();
+    });
+    await runDispatch(k.f, async () => {
+      await resource("workspace", { driver: k.driver });
+      await step("write", () => "ok", {}, "safe_to_retry", ["workspace"]);
+      return "done";
+    });
+    expect(k.checkpoints).toEqual([]);
+    expect(completion(k.calls)).toBeUndefined();
+    expect(failure(k.calls)).toBeUndefined();
+  });
+
+  it("fails the execution when a selected checkpoint is unavailable", async () => {
+    const k = setup();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      k.driver.create.mockImplementation(() => {
+        throw new CheckpointUnavailable("expired");
+      });
+      await runDispatch(k.f, () => resource("workspace", { driver: k.driver }));
+      expect(failure(k.calls)).toBe(
+        "agent_error: CheckpointUnavailable: expired",
+      );
+      expect(completion(k.calls)).toBeUndefined();
+    } finally {
+      errorLog.mockRestore();
+    }
   });
 });

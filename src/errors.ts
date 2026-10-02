@@ -7,6 +7,9 @@ export class RebunoError extends Error {
 
 export class NetworkError extends RebunoError {}
 
+/** Raised by a resource driver when its selected checkpoint is gone. */
+export class CheckpointUnavailable extends RebunoError {}
+
 export class APIError extends RebunoError {
   code: string;
   statusCode: number;

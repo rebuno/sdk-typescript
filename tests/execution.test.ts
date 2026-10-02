@@ -25,7 +25,11 @@ function fakeKernel(overrides: Partial<Record<string, any>> = {}) {
     }));
   delete overrides.decide;
   return {
-    submitStep: vi.fn(async () => ({ stepId: `step-${++n}`, ...decide() })),
+    submitStep: vi.fn(async () => ({
+      stepId: `step-${++n}`,
+      resources: [],
+      ...decide(),
+    })),
     completeStep: vi.fn(async () => {}),
     failStep: vi.fn(async () => {}),
     heartbeat: vi.fn(async () => {}),
@@ -104,6 +108,7 @@ describe("invokeTool", () => {
       "step-1",
       "fresh",
       LEASE,
+      {},
     );
   });
 

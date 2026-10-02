@@ -17,6 +17,7 @@ export interface Execution {
   parentExecutionId: string | null;
   forkedFrom: string | null;
   forkSeq: number;
+  restoration: Record<string, ResourceSelection> | null;
 }
 
 export interface Step {
@@ -33,6 +34,28 @@ export interface Step {
   error: unknown;
 }
 
+export interface ResourceSelection {
+  checkpointRef: string;
+  checkpointSeq: number;
+  covered: boolean;
+}
+
+export interface Resource {
+  key: string;
+  generation: number;
+  binding: unknown;
+  checkpointRef: string;
+  covered: boolean;
+  everySteps: number;
+  onCompletion: boolean;
+}
+
+export interface StepResource {
+  key: string;
+  generation: number;
+  due: boolean;
+}
+
 export interface StepDecision {
   decision: string;
   stepId: string;
@@ -41,6 +64,7 @@ export interface StepDecision {
   approvalId: string | null;
   reason: string;
   ruleId: string;
+  resources: StepResource[];
 }
 
 export interface Event {
@@ -78,6 +102,20 @@ export function parseExecution(r: Raw): Execution {
       typeof r.parent_execution_id === "string" ? r.parent_execution_id : null,
     forkedFrom: typeof r.forked_from === "string" ? r.forked_from : null,
     forkSeq: num(r.fork_seq),
+    restoration: r.restoration
+      ? Object.fromEntries(
+          Object.entries(r.restoration as Record<string, Raw>).map(
+            ([key, s]) => [
+              key,
+              {
+                checkpointRef: str(s.checkpoint_ref),
+                checkpointSeq: num(s.checkpoint_seq),
+                covered: s.covered === true,
+              },
+            ],
+          ),
+        )
+      : null,
   };
 }
 
@@ -106,6 +144,23 @@ export function parseStepDecision(r: Raw): StepDecision {
     approvalId: (r.approval_id ?? null) as string | null,
     reason: str(r.reason),
     ruleId: str(r.rule_id),
+    resources: ((r.resources ?? []) as Raw[]).map((s) => ({
+      key: str(s.key),
+      generation: num(s.generation),
+      due: s.due === true,
+    })),
+  };
+}
+
+export function parseResource(r: Raw): Resource {
+  return {
+    key: str(r.key),
+    generation: num(r.generation),
+    binding: r.binding ?? null,
+    checkpointRef: str(r.checkpoint_ref),
+    covered: r.covered === true,
+    everySteps: num(r.every_steps, 1),
+    onCompletion: r.on_completion !== false,
   };
 }
 

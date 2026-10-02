@@ -8,8 +8,10 @@ import {
 import {
   type Execution,
   parseExecution,
+  parseResource,
   parseStep,
   parseStepDecision,
+  type Resource,
   type Step,
   type StepDecision,
 } from "./types.js";
@@ -38,6 +40,31 @@ export interface DispatchLease {
   readonly dispatchId: string;
   readonly attempt: number;
   readonly timeoutMs: number;
+}
+
+export interface ResourceRegistration {
+  key: string;
+  driverId: string;
+  configuration: unknown;
+  coverageReuse: boolean;
+  everySteps: number;
+  onCompletion: boolean;
+}
+
+export interface CheckpointRecords {
+  captures?: { key: string; generation: number; checkpointRef: string }[];
+  captureFailures?: { key: string; generation: number; error: string }[];
+}
+
+function checkpointPayload(records: CheckpointRecords) {
+  return {
+    captures: records.captures?.map((c) => ({
+      key: c.key,
+      generation: c.generation,
+      checkpoint_ref: c.checkpointRef,
+    })),
+    capture_failures: records.captureFailures,
+  };
 }
 
 export const heartbeatIntervalMs = (lease: DispatchLease): number =>
@@ -155,6 +182,7 @@ export class KernelClient {
       target: string;
       args: unknown;
       idempotency: string;
+      resources?: string[];
     },
     lease: DispatchLease,
   ): Promise<StepDecision> {
@@ -164,6 +192,7 @@ export class KernelClient {
         target: p.target,
         args: p.args,
         idempotency: p.idempotency,
+        resources: p.resources ?? [],
       }),
     );
     const r = await this.send(
@@ -180,11 +209,12 @@ export class KernelClient {
     stepId: string,
     result: unknown,
     lease: DispatchLease,
+    records: CheckpointRecords = {},
   ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/steps/${stepId}/complete`,
-      enc(JSON.stringify({ result })),
+      enc(JSON.stringify({ result, ...checkpointPayload(records) })),
       leaseHeaders(lease),
     );
   }
@@ -194,11 +224,12 @@ export class KernelClient {
     stepId: string,
     error: unknown,
     lease: DispatchLease,
+    records: CheckpointRecords = {},
   ): Promise<void> {
     await this.send(
       "POST",
       `/v0/executions/${executionId}/steps/${stepId}/fail`,
-      enc(JSON.stringify({ error })),
+      enc(JSON.stringify({ error, ...checkpointPayload(records) })),
       leaseHeaders(lease),
     );
   }
@@ -214,6 +245,56 @@ export class KernelClient {
       "POST",
       `/v0/executions/${executionId}/steps/${stepId}/stream`,
       enc(JSON.stringify({ seq, data })),
+      leaseHeaders(lease),
+    );
+  }
+
+  async registerResource(
+    executionId: string,
+    p: ResourceRegistration,
+    lease: DispatchLease,
+  ): Promise<Resource> {
+    const r = await this.send(
+      "POST",
+      `/v0/executions/${executionId}/resources`,
+      enc(
+        JSON.stringify({
+          key: p.key,
+          driver_id: p.driverId,
+          configuration: p.configuration,
+          coverage_reuse: p.coverageReuse,
+          every_steps: p.everySteps,
+          on_completion: p.onCompletion,
+        }),
+      ),
+      leaseHeaders(lease),
+    );
+    return parseResource(await r.json());
+  }
+
+  async bindResource(
+    executionId: string,
+    key: string,
+    binding: unknown,
+    lease: DispatchLease,
+  ): Promise<void> {
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/resources/${encodeURIComponent(key)}/binding`,
+      enc(JSON.stringify({ binding })),
+      leaseHeaders(lease),
+    );
+  }
+
+  async publishCheckpoints(
+    executionId: string,
+    records: CheckpointRecords,
+    lease: DispatchLease,
+  ): Promise<void> {
+    await this.send(
+      "POST",
+      `/v0/executions/${executionId}/resources/checkpoints`,
+      enc(JSON.stringify(checkpointPayload(records))),
       leaseHeaders(lease),
     );
   }
