@@ -39,6 +39,10 @@ function resourceKernel(
         };
         views[registration.key] = v;
       }
+      if (!v.everySteps && registration.everySteps) {
+        v.everySteps = registration.everySteps;
+        v.onCompletion = registration.onCompletion;
+      }
       return v;
     }),
     bindResource: vi.fn(async (_id: string, key: string, binding: unknown) => {
@@ -90,6 +94,58 @@ const due = (key = "workspace", generation = 4) => ({
 afterEach(() => vi.restoreAllMocks());
 
 describe("resource", () => {
+  it.each([true, false])(
+    "reuses bindings without captures when checkpoint support is %s",
+    async (supportsCheckpoints) => {
+      const k = resourceKernel({}, [{ resources: [{ ...due(), due: false }] }]);
+      const d = driver();
+      const reuse = supportsCheckpoints ? d : { ...d, checkpoint: undefined };
+      await withContext(k, async () => {
+        const handle = await resource("workspace", { driver: reuse });
+        expect(handle.files).toEqual([]);
+        expect(
+          await step("write", () => "ok", {}, "safe_to_retry", ["workspace"]),
+        ).toBe("ok");
+        await execution().checkpointOnCompletion();
+      });
+      await withContext(k, async () => {
+        await resource("workspace", { driver: reuse });
+        await execution().checkpointOnCompletion();
+      });
+      expect(d.create).toHaveBeenCalledExactlyOnceWith(undefined);
+      expect(d.open).toHaveBeenCalledExactlyOnceWith({ sandboxId: "sbx-new" });
+      expect(d.checkpoint).not.toHaveBeenCalled();
+      expect(k.publishCheckpoints).not.toHaveBeenCalled();
+      expect(k.views.workspace.everySteps).toBe(0);
+      expect(k.views.workspace.onCompletion).toBe(false);
+    },
+  );
+
+  it("enables checkpointing on an existing binding", async () => {
+    const k = resourceKernel();
+    const d = driver();
+    await withContext(k, () => resource("workspace", { driver: d }));
+    await withContext(k, () =>
+      resource("workspace", { driver: d, checkpoints: { everySteps: 5 } }),
+    );
+    expect(d.create).toHaveBeenCalledTimes(1);
+    expect(d.open).toHaveBeenCalledExactlyOnceWith({ sandboxId: "sbx-new" });
+    expect(d.checkpoint).toHaveBeenCalledTimes(1);
+    expect(k.views.workspace.everySteps).toBe(5);
+    expect(k.publishCheckpoints).toHaveBeenCalledTimes(1);
+  });
+
+  it("requires a checkpoint method when a policy is enabled", async () => {
+    const k = resourceKernel();
+    const d = { ...driver(), checkpoint: undefined };
+    await expect(
+      withContext(k, () =>
+        resource("workspace", { driver: d, checkpoints: {} }),
+      ),
+    ).rejects.toThrow("driver.checkpoint");
+    expect(d.create).not.toHaveBeenCalled();
+  });
+
   it("creates, binds and captures a baseline once per dispatch", async () => {
     const k = resourceKernel();
     const d = driver();
@@ -137,7 +193,9 @@ describe("resource", () => {
       generation: 3,
     });
     const d = driver();
-    await withContext(k, () => resource("workspace", { driver: d }));
+    await withContext(k, () =>
+      resource("workspace", { driver: d, checkpoints: {} }),
+    );
     expect(d.open).toHaveBeenCalledExactlyOnceWith({
       sandboxId: "sbx-existing",
     });
@@ -157,7 +215,9 @@ describe("resource", () => {
         generation: 7,
       });
       const d = driver();
-      await withContext(k, () => resource("workspace", { driver: d }));
+      await withContext(k, () =>
+        resource("workspace", { driver: d, checkpoints: {} }),
+      );
       expect(d.create).toHaveBeenCalledExactlyOnceWith("selected");
       expect(d.checkpoint).toHaveBeenCalledTimes(covered ? 0 : 1);
       expect(k.publishCheckpoints).toHaveBeenCalledTimes(covered ? 0 : 1);
@@ -169,7 +229,9 @@ describe("resource", () => {
     const d = driver();
     d.create.mockRejectedValue(new CheckpointUnavailable("expired"));
     await expect(
-      withContext(k, () => resource("workspace", { driver: d })),
+      withContext(k, () =>
+        resource("workspace", { driver: d, checkpoints: {} }),
+      ),
     ).rejects.toThrow(CheckpointUnavailable);
     expect(d.create).toHaveBeenCalledExactlyOnceWith("expired");
     expect(k.bindResource).not.toHaveBeenCalled();
@@ -183,7 +245,7 @@ describe("resource", () => {
     ]);
     const d = driver();
     await withContext(k, async () => {
-      await resource("workspace", { driver: d });
+      await resource("workspace", { driver: d, checkpoints: {} });
       const write = defineTool({
         name: "write",
         resources: ["workspace"],
@@ -214,7 +276,7 @@ describe("resource", () => {
     const k = resourceKernel({ covered: true });
     const d = driver();
     await withContext(k, async () => {
-      await resource("workspace", { driver: d });
+      await resource("workspace", { driver: d, checkpoints: {} });
       await defineTool({ name: "lookup", execute: () => "found" })({});
       await wrapTool({ name: "read", invoke: () => "read" })({});
       await wrapTool({ name: "read", resources: [], invoke: () => "read" })({});
@@ -250,8 +312,8 @@ describe("resource", () => {
     const d = driver();
     d.checkpoint.mockRejectedValue(new Error("snapshot failed"));
     await withContext(k, async () => {
-      await resource("workspace", { driver: d });
-      await resource("database", { driver: driver() });
+      await resource("workspace", { driver: d, checkpoints: {} });
+      await resource("database", { driver: driver(), checkpoints: {} });
       expect(
         await step("write", () => "done", {}, "safe_to_retry", [
           "workspace",
@@ -277,7 +339,10 @@ describe("resource", () => {
     const k = resourceKernel({ covered: true }, [{ resources: [due()] }]);
     const d = driver();
     await withContext(k, async () => {
-      const handle = await resource("workspace", { driver: d });
+      const handle = await resource("workspace", {
+        driver: d,
+        checkpoints: {},
+      });
       await expect(
         step(
           "write",
@@ -318,7 +383,7 @@ describe("resource", () => {
     const d = driver();
     const body = vi.fn(() => "live");
     await withContext(k, async () => {
-      await resource("workspace", { driver: d });
+      await resource("workspace", { driver: d, checkpoints: {} });
       const call = step("write", body, {}, "safe_to_retry", ["workspace"]);
       if (outcome.error) await expect(call).rejects.toThrow("recorded failure");
       else expect(await call).toBe("recorded");
@@ -342,7 +407,7 @@ describe("resource", () => {
       const d = driver();
       d.checkpoint.mockRejectedValue(signal);
       await withContext(k, async () => {
-        await resource("workspace", { driver: d });
+        await resource("workspace", { driver: d, checkpoints: {} });
         await expect(
           step("write", () => "ok", {}, "safe_to_retry", ["workspace"]),
         ).rejects.toBe(signal);
@@ -366,7 +431,10 @@ describe("resource", () => {
     });
     const recorded: string[][] = [];
     await withContext(k, async () => {
-      const handle = await resource("workspace", { driver: d });
+      const handle = await resource("workspace", {
+        driver: d,
+        checkpoints: {},
+      });
       k.completeStep.mockImplementation(async () => {
         await Promise.resolve();
         recorded.push([...handle.files]);
@@ -419,7 +487,7 @@ describe("resource", () => {
         driver: a,
         checkpoints: { everySteps: 5 },
       });
-      await resource("database", { driver: b });
+      await resource("database", { driver: b, checkpoints: {} });
       const ctx = execution();
       await ctx.checkpointOnCompletion();
       expect(k.publishCheckpoints).not.toHaveBeenCalled();

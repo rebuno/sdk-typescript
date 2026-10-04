@@ -159,8 +159,8 @@ export function parseResource(r: Raw): Resource {
     binding: r.binding ?? null,
     checkpointRef: str(r.checkpoint_ref),
     covered: r.covered === true,
-    everySteps: num(r.every_steps, 1),
-    onCompletion: r.on_completion !== false,
+    everySteps: num(r.every_steps),
+    onCompletion: r.on_completion === true,
   };
 }
 

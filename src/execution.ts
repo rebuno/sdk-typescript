@@ -56,7 +56,7 @@ export class ExecutionContext {
     string,
     {
       handle: unknown;
-      checkpoint: () => string | Promise<string>;
+      checkpoint?: () => string | Promise<string>;
       registration: ResourceRegistration;
     }
   >();
@@ -101,8 +101,8 @@ export class ExecutionContext {
       const cached = this.resources.get(key);
       if (cached) return cached.handle as THandle;
       const { driver, checkpoints } = opts;
-      const everySteps = checkpoints?.everySteps ?? 1;
-      if (!Number.isInteger(everySteps) || everySteps < 1)
+      const everySteps = checkpoints ? (checkpoints.everySteps ?? 1) : 0;
+      if (checkpoints && (!Number.isInteger(everySteps) || everySteps < 1))
         throw new RangeError("everySteps must be a positive integer");
       const registration = {
         key,
@@ -110,13 +110,15 @@ export class ExecutionContext {
         configuration: driver.configuration ?? null,
         coverageReuse: driver.coverageReuse ?? false,
         everySteps,
-        onCompletion: checkpoints?.onCompletion ?? true,
+        onCompletion: checkpoints ? (checkpoints.onCompletion ?? true) : false,
       };
       const view = await this.kernel.registerResource(
         this.id,
         registration,
         this.lease,
       );
+      if (view.everySteps && !driver.checkpoint)
+        throw new RebunoError("checkpoint policy requires driver.checkpoint()");
       let handle: THandle;
       if (view.binding !== null) {
         handle = await driver.open(view.binding as TBinding);
@@ -132,10 +134,10 @@ export class ExecutionContext {
       }
       this.resources.set(key, {
         handle,
-        checkpoint: () => driver.checkpoint(handle),
+        checkpoint: driver.checkpoint?.bind(driver, handle),
         registration,
       });
-      if (!view.covered) {
+      if (view.everySteps && !view.covered) {
         const records = await this.capture([
           { key, generation: view.generation, due: true },
         ]);
@@ -152,6 +154,10 @@ export class ExecutionContext {
         const managed = this.resources.get(r.key);
         if (!managed)
           throw new RebunoError("resource() was not called in this dispatch");
+        if (!managed.checkpoint)
+          throw new RebunoError(
+            "resource driver does not implement checkpoint()",
+          );
         const checkpointRef = await managed.checkpoint();
         records.captures ??= [];
         records.captures.push({

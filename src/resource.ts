@@ -15,7 +15,7 @@ export interface ResourceDriver<THandle, TBinding = unknown> {
     | { handle: THandle; binding: TBinding }
     | Promise<{ handle: THandle; binding: TBinding }>;
   open(binding: TBinding): THandle | Promise<THandle>;
-  checkpoint(handle: THandle): string | Promise<string>;
+  checkpoint?(handle: THandle): string | Promise<string>;
 }
 
 export interface ResourceOptions<THandle, TBinding = unknown> {
