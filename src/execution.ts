@@ -1,3 +1,4 @@
+import { runInStep } from "./context.js";
 import {
   Blocked,
   LeaseSuperseded,
@@ -61,6 +62,11 @@ export class ExecutionContext {
     }
   >();
   private effects: Promise<void> = Promise.resolve();
+  private inFlight = 0;
+  private waiting: {
+    resolve: (suspended: boolean) => void;
+    reject: (e: unknown) => void;
+  }[] = [];
 
   constructor(o: ExecutionContextOptions) {
     this.kernel = o.kernel;
@@ -218,6 +224,44 @@ export class ExecutionContext {
     }
   }
 
+  /** Resolves once every in-flight call waits, with whether the execution
+   * suspended. */
+  private awaitIdle(): Promise<boolean> {
+    const idle = new Promise<boolean>((resolve, reject) =>
+      this.waiting.push({ resolve, reject }),
+    );
+    void this.suspendIfIdle();
+    return idle;
+  }
+
+  private async suspendIfIdle(): Promise<void> {
+    if (!this.waiting.length || this.waiting.length < this.inFlight) return;
+    const waiters = this.waiting;
+    this.waiting = [];
+    try {
+      const suspended =
+        this.suspension !== null ||
+        (await this.kernel.suspend(this.id, this.lease));
+      for (const w of waiters) w.resolve(suspended);
+    } catch (e) {
+      for (const w of waiters) w.reject(e);
+    }
+  }
+
+  async awaitSubagent(stepId: string): Promise<unknown> {
+    if (await this.awaitIdle()) {
+      this.suspension ??= new Blocked();
+      throw this.suspension;
+    }
+    const step = await this.kernel.getStep(this.id, stepId);
+    if (step?.error != null)
+      throw new ToolError(errorMessage(step.error), {
+        toolId: step.target,
+        stepId,
+      });
+    return step?.result ?? null;
+  }
+
   /**
    * The kernel counts occurrences of this effect under its own lock, so
    * concurrent identical calls get distinct step ids without coordination here.
@@ -287,6 +331,25 @@ export class ExecutionContext {
       resources?: string[];
     } = {},
   ): Promise<unknown> {
+    this.inFlight++;
+    try {
+      return await this.runTool(target, args, opts);
+    } finally {
+      this.inFlight--;
+      await this.suspendIfIdle();
+    }
+  }
+
+  private runTool(
+    target: string,
+    args: Record<string, unknown>,
+    opts: {
+      idempotency?: Idempotency;
+      run?: () => Promise<unknown>;
+      kind?: StepKind;
+      resources?: string[];
+    },
+  ): Promise<unknown> {
     return this.exclusive(async () => {
       const { stepId, dec } = await this.submit({
         kind: opts.kind ?? "tool_call",
@@ -308,7 +371,7 @@ export class ExecutionContext {
       const due = dec.resources.filter((r) => r.due);
       let result: unknown;
       try {
-        result = opts.run ? await opts.run() : null;
+        result = opts.run ? await runInStep(stepId, opts.run) : null;
       } catch (e) {
         if (
           e instanceof Blocked ||

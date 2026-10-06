@@ -308,6 +308,16 @@ export class KernelClient {
     );
   }
 
+  async suspend(executionId: string, lease: DispatchLease): Promise<boolean> {
+    const r = await this.send(
+      "POST",
+      `/v0/executions/${executionId}/suspend`,
+      EMPTY,
+      leaseHeaders(lease),
+    );
+    return ((await r.json()) as { suspended: boolean }).suspended;
+  }
+
   async completeExecution(
     executionId: string,
     output: unknown,

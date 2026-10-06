@@ -2,9 +2,18 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import type { ExecutionContext } from "./execution.js";
 
 const storage = new AsyncLocalStorage<ExecutionContext>();
+const stepStorage = new AsyncLocalStorage<string>();
 
 export function runWithContext<T>(ctx: ExecutionContext, fn: () => T): T {
   return storage.run(ctx, fn);
+}
+
+export function runInStep<T>(stepId: string, fn: () => T): T {
+  return stepStorage.run(stepId, fn);
+}
+
+export function currentStepId(): string | null {
+  return stepStorage.getStore() ?? null;
 }
 
 export function getExecution(): ExecutionContext | null {

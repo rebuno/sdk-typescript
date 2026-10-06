@@ -8,6 +8,7 @@ import {
   parseEvent,
   parseExecution,
   parseStep,
+  type SpawnedBy,
   type Step,
 } from "./types.js";
 
@@ -77,13 +78,24 @@ export class Client {
   async create(
     agentId: string,
     input?: unknown,
-    opts: { session?: string; parentExecutionId?: string } = {},
+    opts: {
+      session?: string;
+      parentExecutionId?: string;
+      idempotencyKey?: string;
+      spawnedBy?: SpawnedBy;
+    } = {},
   ): Promise<Execution> {
     const body: Record<string, unknown> = { agent_id: agentId };
     if (input !== undefined) body.input = input;
     if (opts.session) body.session = opts.session;
     if (opts.parentExecutionId)
       body.parent_execution_id = opts.parentExecutionId;
+    if (opts.idempotencyKey) body.idempotency_key = opts.idempotencyKey;
+    if (opts.spawnedBy)
+      body.spawned_by = {
+        execution_id: opts.spawnedBy.executionId,
+        step_id: opts.spawnedBy.stepId,
+      };
     const r = await this.request("POST", "/v0/executions", { body });
     return parseExecution(await r.json());
   }

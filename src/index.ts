@@ -34,6 +34,7 @@ export type {
 } from "./resource.js";
 export { resource } from "./resource.js";
 export { step } from "./step.js";
+export { subagent } from "./subagent.js";
 export type {
   DefineToolOptions,
   Idempotency,
@@ -48,6 +49,7 @@ export type {
   ExecutionStatus,
   Resource,
   ResourceSelection,
+  SpawnedBy,
   Step,
   StepDecision,
   StepResource,

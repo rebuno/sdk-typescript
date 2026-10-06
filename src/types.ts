@@ -18,6 +18,13 @@ export interface Execution {
   forkedFrom: string | null;
   forkSeq: number;
   restoration: Record<string, ResourceSelection> | null;
+  idempotencyKey: string;
+  spawnedBy: SpawnedBy | null;
+}
+
+export interface SpawnedBy {
+  executionId: string;
+  stepId: string;
 }
 
 export interface Step {
@@ -115,6 +122,13 @@ export function parseExecution(r: Raw): Execution {
             ],
           ),
         )
+      : null,
+    idempotencyKey: str(r.idempotency_key),
+    spawnedBy: r.spawned_by
+      ? {
+          executionId: str((r.spawned_by as Raw).execution_id),
+          stepId: str((r.spawned_by as Raw).step_id),
+        }
       : null,
   };
 }
