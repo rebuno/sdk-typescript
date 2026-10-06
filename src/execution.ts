@@ -61,7 +61,9 @@ export class ExecutionContext {
       registration: ResourceRegistration;
     }
   >();
-  private effects: Promise<void> = Promise.resolve();
+  private effectsHeld = false;
+  private effectsQueue: (() => void)[] = [];
+  private effectsHolder: string | undefined;
   private inFlight = 0;
   private waiting: {
     resolve: (suspended: boolean) => void;
@@ -89,14 +91,29 @@ export class ExecutionContext {
     return this.ctrl.signal;
   }
 
-  private exclusive<T>(run: () => Promise<T>, needed = true): Promise<T> {
+  private async exclusive<T>(run: () => Promise<T>, needed = true): Promise<T> {
     if (!needed) return run();
-    const result = this.effects.then(run);
-    this.effects = result.then(
-      () => {},
-      () => {},
-    );
-    return result;
+    await this.acquireEffects();
+    try {
+      return await run();
+    } finally {
+      this.releaseEffects();
+    }
+  }
+
+  private acquireEffects(): Promise<void> {
+    if (!this.effectsHeld) {
+      this.effectsHeld = true;
+      return Promise.resolve();
+    }
+    return new Promise((resolve) => this.effectsQueue.push(resolve));
+  }
+
+  private releaseEffects(): void {
+    this.effectsHolder = undefined;
+    const next = this.effectsQueue.shift();
+    if (next) next();
+    else this.effectsHeld = false;
   }
 
   async registerResource<THandle, TBinding>(
@@ -248,10 +265,21 @@ export class ExecutionContext {
     }
   }
 
+  /** The call's effects lock is released while it waits, so concurrent calls
+   * can start their own subagents, and taken back before its step completes. */
   async awaitSubagent(stepId: string): Promise<unknown> {
-    if (await this.awaitIdle()) {
-      this.suspension ??= new Blocked();
-      throw this.suspension;
+    const held = this.effectsHolder === stepId;
+    if (held) this.releaseEffects();
+    try {
+      if (await this.awaitIdle()) {
+        this.suspension ??= new Blocked();
+        throw this.suspension;
+      }
+    } finally {
+      if (held) {
+        await this.acquireEffects();
+        this.effectsHolder = stepId;
+      }
     }
     const step = await this.kernel.getStep(this.id, stepId);
     if (step?.error != null)
@@ -350,6 +378,7 @@ export class ExecutionContext {
       resources?: string[];
     },
   ): Promise<unknown> {
+    const locked = this.resources.size > 0;
     return this.exclusive(async () => {
       const { stepId, dec } = await this.submit({
         kind: opts.kind ?? "tool_call",
@@ -358,6 +387,7 @@ export class ExecutionContext {
         idempotency: opts.idempotency ?? "safe_to_retry",
         resources: opts.resources,
       });
+      if (locked) this.effectsHolder = stepId;
 
       if (dec.decision === "replay") {
         if (dec.error != null)
@@ -398,7 +428,7 @@ export class ExecutionContext {
         records,
       );
       return result;
-    }, this.resources.size > 0);
+    }, locked);
   }
 
   /** Submit an `llm_call` step. Returns `(stepId, decision)`: `proceed` (run the
