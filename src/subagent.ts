@@ -7,17 +7,20 @@ import { currentStepId, getExecution } from "./context.js";
  * outcome as the tool's step. Once every in-flight call of the execution waits,
  * the execution suspends, and the handler reruns after they settle.
  *
+ * Subagents started with the same `session` continue one conversation.
+ *
  * `client` needs the `executions:write` scope. Defaults to `new Client()`. */
 export async function subagent<T = unknown>(
   agentId: string,
   input?: unknown,
-  opts: { client?: Client } = {},
+  opts: { session?: string; client?: Client } = {},
 ): Promise<T> {
   const ctx = getExecution();
   const stepId = currentStepId();
   if (!ctx || !stepId)
     throw new Error(`subagent('${agentId}') called outside a tool body.`);
   await (opts.client ?? new Client()).create(agentId, input, {
+    session: opts.session,
     spawnedBy: { executionId: ctx.id, stepId },
   });
   return (await ctx.awaitSubagent(stepId)) as T;
