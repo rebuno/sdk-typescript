@@ -3,6 +3,7 @@ import {
   Blocked,
   failureReason,
   LeaseSuperseded,
+  NetworkError,
   PolicyError,
   RateLimited,
   raiseForRefusal,
@@ -10,11 +11,19 @@ import {
   ToolError,
 } from "./errors.js";
 import { ExecutionContext, Result } from "./execution.js";
-import { type DispatchLease, type FetchFn, KernelClient } from "./kernel.js";
+import {
+  type AgentMetadata,
+  type DispatchLease,
+  type FetchFn,
+  KernelClient,
+} from "./kernel.js";
+
+type JsonSchema = Record<string, unknown>;
 
 /** Minimal Standard Schema v1 shape we consume for optional input validation. */
-interface StandardSchema {
+interface StandardSchema<T = unknown> {
   "~standard": {
+    types?: { output: T };
     validate: (
       value: unknown,
     ) =>
@@ -27,16 +36,46 @@ interface StandardSchema {
   };
 }
 
+/** Minimal Standard JSON Schema v1 shape we consume to publish schemas. */
+interface StandardJSONSchema<T = unknown> {
+  "~standard": {
+    types?: { output: T };
+    jsonSchema: {
+      input: (options: { target: string }) => JsonSchema;
+      output: (options: { target: string }) => JsonSchema;
+    };
+  };
+}
+
+/** A Standard Schema, a Standard JSON Schema, or a plain JSON Schema object.
+ * `T` is the type the schema describes, inferred from schema libraries. */
+export type AgentSchema<T = unknown> =
+  | StandardSchema<T>
+  | StandardJSONSchema<T>
+  | JsonSchema;
+
+function toJsonSchema(
+  schema: AgentSchema | undefined,
+  side: "input" | "output",
+): JsonSchema | undefined {
+  if (!schema) return undefined;
+  const std = (schema as Partial<StandardJSONSchema>)["~standard"];
+  if (!std) return schema as JsonSchema;
+  return std.jsonSchema?.[side]({ target: "draft-2020-12" });
+}
+
 export type ProcessFn<TInput = any, TOutput = unknown> = (
   input: TInput,
-) => TOutput | Promise<TOutput>;
+) => TOutput | Result<TOutput> | Promise<TOutput | Result<TOutput>>;
 
-export interface AgentOptions {
+export interface AgentOptions<TInput = any, TOutput = unknown> {
   secret?: string;
   baseUrl?: string;
   webhookPath?: string;
   kernelTimeout?: number;
-  inputSchema?: StandardSchema;
+  description?: string;
+  inputSchema?: AgentSchema<TInput>;
+  outputSchema?: AgentSchema<TOutput>;
   fetch?: FetchFn;
 }
 
@@ -50,7 +89,10 @@ export class Agent<TInput = any, TOutput = unknown> {
   private secret: string;
   private baseUrl: string;
   readonly webhookPath: string;
-  private inputSchema?: StandardSchema;
+  private inputSchema?: AgentSchema;
+  private description?: string;
+  private outputSchema?: AgentSchema;
+  private metadata?: Promise<void>;
   private kernel: KernelClient;
   private process?: ProcessFn<TInput, TOutput>;
   private tasks = new Map<
@@ -58,7 +100,7 @@ export class Agent<TInput = any, TOutput = unknown> {
     { lease: DispatchLease; promise: Promise<void>; ctrl: AbortController }
   >();
 
-  constructor(agentId: string, opts: AgentOptions = {}) {
+  constructor(agentId: string, opts: AgentOptions<TInput, TOutput> = {}) {
     if (!agentId) throw new Error("agentId must not be empty");
     this.agentId = agentId;
     this.secret = opts.secret ?? process.env.REBUNO_AGENT_SECRET ?? "";
@@ -74,6 +116,8 @@ export class Agent<TInput = any, TOutput = unknown> {
       throw new Error("baseUrl required (set REBUNO_URL or pass baseUrl)");
     this.webhookPath = opts.webhookPath ?? "/webhook";
     this.inputSchema = opts.inputSchema;
+    this.description = opts.description;
+    this.outputSchema = opts.outputSchema;
     this.kernel = new KernelClient({
       agentId,
       secret: this.secret,
@@ -87,12 +131,33 @@ export class Agent<TInput = any, TOutput = unknown> {
     this.process = process;
   }
 
+  /** Publish the agent's description and schemas to the kernel. `serve()` and
+   * the first dispatch call it; a network failure is retried on the next
+   * dispatch. */
+  publishMetadata(): Promise<void> {
+    this.metadata ??= Promise.resolve()
+      .then(() => {
+        const metadata: AgentMetadata = {
+          description: this.description,
+          inputSchema: toJsonSchema(this.inputSchema, "input"),
+          outputSchema: toJsonSchema(this.outputSchema, "output"),
+        };
+        return this.kernel.setMetadata(metadata);
+      })
+      .catch((e) => {
+        if (e instanceof NetworkError) this.metadata = undefined;
+        console.error("rebuno: publishing agent metadata failed", e);
+      });
+    return this.metadata;
+  }
+
   fetch = async (request: Request): Promise<Response> => {
     const raw = new Uint8Array(await request.arrayBuffer());
     const sig = request.headers.get("Rebuno-Signature") ?? "";
     const { verifySignature } = await import("./crypto.js");
     if (!(await verifySignature(this.secret, raw, sig)))
       return new Response(null, { status: 401 });
+    void this.publishMetadata();
     const payload = JSON.parse(new TextDecoder().decode(raw));
     const executionId = payload.execution_id as string;
     const lease: DispatchLease = {
@@ -176,8 +241,11 @@ export class Agent<TInput = any, TOutput = unknown> {
 
     await runWithContext(ctx, async () => {
       let input = exec.input;
-      if (this.inputSchema) {
-        const res = await this.inputSchema["~standard"].validate(input);
+      const std = (this.inputSchema as Partial<StandardSchema> | undefined)?.[
+        "~standard"
+      ];
+      if (std?.validate) {
+        const res = await std.validate(input);
         if ("issues" in res && res.issues) {
           const msg = res.issues.map((i) => i.message).join("; ");
           await kernel.failExecution(
@@ -255,6 +323,7 @@ export class Agent<TInput = any, TOutput = unknown> {
     process?: ProcessFn<TInput, TOutput>,
   ): Promise<void> {
     if (process) this.bind(process);
+    void this.publishMetadata();
     const { createServer } = await import("node:http");
     const server = createServer(async (req, res) => {
       if (req.method !== "POST" || req.url !== this.webhookPath) {

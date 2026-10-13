@@ -1,4 +1,9 @@
-export type { AgentOptions, ProcessFn, ServeOptions } from "./agent.js";
+export type {
+  AgentOptions,
+  AgentSchema,
+  ProcessFn,
+  ServeOptions,
+} from "./agent.js";
 export { Agent } from "./agent.js";
 export type { ClientOptions } from "./client.js";
 export { Client } from "./client.js";

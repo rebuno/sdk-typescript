@@ -587,3 +587,65 @@ describe("Agent resource checkpoints", () => {
     }
   });
 });
+
+describe("agent metadata", () => {
+  const exec = { id: "e1", status: "running", input: {} };
+  const metadataCalls = (calls: { url: string; body: any }[]) =>
+    calls.filter((c) => c.url.endsWith("/v0/agents/a1/metadata"));
+
+  it("publishes the description and JSON Schemas once", async () => {
+    const { f, calls } = kernelFetch(exec);
+    const inputSchema = {
+      "~standard": {
+        version: 1,
+        vendor: "test",
+        validate: (value: unknown) => ({ value }),
+        jsonSchema: {
+          input: () => ({ type: "object", required: ["topic"] }),
+          output: () => ({ type: "object" }),
+        },
+      },
+    };
+    const agent = new Agent("a1", {
+      secret: SECRET,
+      baseUrl: KERNEL,
+      fetch: f,
+      description: "Researches a topic.",
+      inputSchema,
+      outputSchema: { type: "string" },
+    });
+    agent.bind(() => "ok");
+    await agent.fetch(await webhookRequest("e1"));
+    await agent.fetch(await webhookRequest("e1", "d2"));
+    await agent.join();
+    await agent.publishMetadata();
+
+    expect(metadataCalls(calls).map((c) => c.body)).toEqual([
+      {
+        description: "Researches a topic.",
+        input_schema: { type: "object", required: ["topic"] },
+        output_schema: { type: "string" },
+      },
+    ]);
+  });
+
+  it("retries publishing after a network failure", async () => {
+    const { f, calls } = kernelFetch(exec);
+    const flaky = vi.fn(async (url: string, init: any) => {
+      if (url.endsWith("/metadata") && metadataCalls(calls).length === 0) {
+        calls.push({ url, body: null });
+        throw new TypeError("fetch failed");
+      }
+      return f(url, init);
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const agent = makeAgent(flaky, () => "ok");
+      await agent.publishMetadata();
+      await agent.publishMetadata();
+      expect(metadataCalls(calls)).toHaveLength(2);
+    } finally {
+      errorLog.mockRestore();
+    }
+  });
+});

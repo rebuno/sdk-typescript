@@ -42,6 +42,12 @@ export interface DispatchLease {
   readonly timeoutMs: number;
 }
 
+export interface AgentMetadata {
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+}
+
 export interface ResourceRegistration {
   key: string;
   driverId: string;
@@ -149,6 +155,20 @@ export class KernelClient {
   async getExecution(executionId: string): Promise<Execution> {
     const r = await this.send("GET", `/v0/executions/${executionId}`, EMPTY);
     return parseExecution(await r.json());
+  }
+
+  async setMetadata(metadata: AgentMetadata): Promise<void> {
+    await this.send(
+      "PUT",
+      `/v0/agents/${this.agentId}/metadata`,
+      enc(
+        JSON.stringify({
+          description: metadata.description,
+          input_schema: metadata.inputSchema,
+          output_schema: metadata.outputSchema,
+        }),
+      ),
+    );
   }
 
   async previousState(executionId: string): Promise<unknown> {
