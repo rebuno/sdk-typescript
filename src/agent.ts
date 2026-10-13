@@ -18,7 +18,7 @@ import {
   KernelClient,
 } from "./kernel.js";
 
-type JsonSchema = Record<string, unknown>;
+type JsonSchema = object;
 
 /** Minimal Standard Schema v1 shape we consume for optional input validation. */
 interface StandardSchema<T = unknown> {

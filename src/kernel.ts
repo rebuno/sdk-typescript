@@ -44,8 +44,8 @@ export interface DispatchLease {
 
 export interface AgentMetadata {
   description?: string;
-  inputSchema?: Record<string, unknown>;
-  outputSchema?: Record<string, unknown>;
+  inputSchema?: object;
+  outputSchema?: object;
 }
 
 export interface ResourceRegistration {
