@@ -20,6 +20,9 @@ export interface Execution {
   restoration: Record<string, ResourceSelection> | null;
   idempotencyKey: string;
   spawnedBy: SpawnedBy | null;
+  createdBy: string;
+  onBehalfOf: string;
+  subjectGroups: string[];
 }
 
 export interface SpawnedBy {
@@ -89,6 +92,7 @@ export interface Approval {
   status: string;
   message: string;
   decidedBy: string;
+  assertedBy: string;
   rationale: string;
 }
 
@@ -130,6 +134,9 @@ export function parseExecution(r: Raw): Execution {
           stepId: str((r.spawned_by as Raw).step_id),
         }
       : null,
+    createdBy: str(r.created_by),
+    onBehalfOf: str(r.on_behalf_of),
+    subjectGroups: (r.subject_groups ?? []) as string[],
   };
 }
 
@@ -196,6 +203,7 @@ export function parseApproval(r: Raw): Approval {
     status: str(r.status),
     message: str(r.message),
     decidedBy: str(r.decided_by),
+    assertedBy: str(r.asserted_by),
     rationale: str(r.rationale),
   };
 }

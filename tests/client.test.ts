@@ -127,4 +127,13 @@ describe("Client", () => {
     const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
     await c.grantApproval("ap1", { decidedBy: "alice", rationale: "ok" });
   });
+
+  it("denyApproval omits decided_by unless delegated", async () => {
+    const f = fakeFetch((_url, init) => {
+      expect(JSON.parse(init.body)).toEqual({ rationale: "" });
+      return new Response(null, { status: 200 });
+    });
+    const c = new Client({ baseUrl: "http://k", apiKey: "key", fetch: f });
+    await c.denyApproval("ap1");
+  });
 });

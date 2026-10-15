@@ -83,6 +83,7 @@ export class Client {
       parentExecutionId?: string;
       idempotencyKey?: string;
       spawnedBy?: SpawnedBy;
+      onBehalfOf?: string;
     } = {},
   ): Promise<Execution> {
     const body: Record<string, unknown> = { agent_id: agentId };
@@ -96,6 +97,7 @@ export class Client {
         execution_id: opts.spawnedBy.executionId,
         step_id: opts.spawnedBy.stepId,
       };
+    if (opts.onBehalfOf) body.on_behalf_of = opts.onBehalfOf;
     const r = await this.request("POST", "/v0/executions", { body });
     return parseExecution(await r.json());
   }
@@ -175,19 +177,19 @@ export class Client {
 
   async grantApproval(
     approvalId: string,
-    opts: { decidedBy: string; rationale?: string },
+    opts: { decidedBy?: string; rationale?: string } = {},
   ): Promise<void> {
-    await this.request("POST", `/v0/approvals/${approvalId}/grant`, {
-      body: { decided_by: opts.decidedBy, rationale: opts.rationale ?? "" },
-    });
+    const body: Record<string, unknown> = { rationale: opts.rationale ?? "" };
+    if (opts.decidedBy) body.decided_by = opts.decidedBy;
+    await this.request("POST", `/v0/approvals/${approvalId}/grant`, { body });
   }
 
   async denyApproval(
     approvalId: string,
-    opts: { decidedBy: string; rationale?: string },
+    opts: { decidedBy?: string; rationale?: string } = {},
   ): Promise<void> {
-    await this.request("POST", `/v0/approvals/${approvalId}/deny`, {
-      body: { decided_by: opts.decidedBy, rationale: opts.rationale ?? "" },
-    });
+    const body: Record<string, unknown> = { rationale: opts.rationale ?? "" };
+    if (opts.decidedBy) body.decided_by = opts.decidedBy;
+    await this.request("POST", `/v0/approvals/${approvalId}/deny`, { body });
   }
 }
