@@ -55,7 +55,11 @@ export function createRebunoFetch(opts: RebunoFetchOptions = {}): FetchFn {
 
     const resp = await inner(input, init);
     const contentType = resp.headers.get("content-type") ?? "";
-    if (resp.status < 400 && isEventStream(contentType) && resp.body)
+    if (
+      resp.status < 400 &&
+      (payload.stream === true || isEventStream(contentType)) &&
+      resp.body
+    )
       return teeResponse(ctx, stepId, resp);
 
     let body: string;
